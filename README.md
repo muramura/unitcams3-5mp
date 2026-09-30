@@ -16,7 +16,7 @@ M5Stack Unit CamS3-5MP 上で動作し、**リアルタイム FPV 映像スト�
 ```
 
 - **Wi-Fi SoftAP**: SSID `StampFly-Cam` (IP: `192.168.4.1`)
-- **MAVLink Bridge**: UART (G43/G44 @ 115200bps) ⇆ Wi-Fi (UDP 14550) [Core 1]
+- **MAVLink Bridge**: UART (G43/G44 @ 2000000bps (2Mbps)) ⇆ Wi-Fi (UDP 14550) [Core 1]
 - **Video Stream**: 5MP センサー (PY260) による MJPEG ストリーミング [Core 0]
   - URL: `http://192.168.4.1/stream` (Mission Planner / QGC / ブラウザ対応)
   - Webプレビュー: `http://192.168.4.1/`

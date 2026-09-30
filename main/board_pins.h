@@ -10,7 +10,7 @@
 #define BOARD_PIN_UART_TX       GPIO_NUM_43   // Connected to StampFly RX
 #define BOARD_PIN_UART_RX       GPIO_NUM_44   // Connected to StampFly TX
 #define BOARD_UART_PORT         UART_NUM_1
-#define BOARD_UART_BAUDRATE     115200        // Default ArduPilot SERIAL3 baudrate
+#define BOARD_UART_BAUDRATE     2000000        // Default ArduPilot SERIAL3 baudrate
 
 // --- Onboard LED & Button ---
 #define BOARD_PIN_LED           GPIO_NUM_14   // Blue LED (Active LOW in typical M5Stack circuits)
