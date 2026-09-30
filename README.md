@@ -28,14 +28,19 @@ M5Stack Unit CamS3-5MP 上で動作し、**リアルタイム FPV 映像スト�
 ## 🔌 配線（Pinout）
 
 ### 1. CamS3 ⇆ StampFly (FC) 配線
-ピンヘッダ（右上）の `G43`, `G44`, `GND` を StampFly の Grove Black (SERIAL3) に接続します。
+CamS3 の **Grove コネクタ（HY2.0-4P）** と StampFly の **赤コネクタ（J3 / SERIAL2）** を **ストレートケーブル（1:1結線）** で接続します。
+ピンヘッダのハンダ付けが不要となり、コネクタ同士で頑丈かつシンプルに接続できます。
 
-| Unit CamS3-5MP | 信号 | StampFly (Grove Black / SERIAL3) |
-| :--- | :--- | :--- |
-| **G44** | RXD | **TX (GPIO 2)** |
-| **G43** | TXD | **RX (GPIO 1)** |
-| **G** | GND | **GND** |
-| *(5V)* | *(5V)* | *※フライト時のみ給電（PC接続時は未結線推奨）* |
+| ピン番号 | CamS3 側 (Grove HY2.0-4P) | 信号 | StampFly 側 (赤コネクタ J3 / SERIAL2) | 備考 |
+| :---: | :--- | :---: | :--- | :--- |
+| **Pin 1** | **TXD (GPIO 19)** | ───> | **RXD (Pin 1: GPIO 15)** | ストレート結線 |
+| **Pin 2** | **RXD (GPIO 20)** | <─── | **TXD (Pin 2: GPIO 13)** | ストレート結線 |
+| **Pin 3** | **5V (VCC)** | ─── | **5VOUT (Pin 3: 5V)** | ストレート結線 |
+| **Pin 4** | **GND** | ─── | **GND (Pin 4: GND)** | ストレート結線 |
+
+※通信速度：**2,000,000 bps (2Mbps)**
+※StampFly の赤コネクタ（J3）は **JST SH 4ピン（1.0mmピッチ）** です。
+※ファームウェア書き換え時は、CamS3 の BOOT ボタン（G0）を押しながら PC に USB 接続（Grove2USB-C）することで ROM ブートローダーに入り、通常通り書き込みできます。
 
 ### 2. PC 接続（プログラム書き込み・デバッグ）
 CamS3 本体の **Grove ポート** に `Grove to USB-C` ケーブルを挿して PC と接続します。

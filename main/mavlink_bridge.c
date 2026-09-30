@@ -19,6 +19,10 @@ static uint32_t s_bytes_udp_to_uart = 0;
 
 static void uart_init_internal(void)
 {
+    // Detach pins from default USB/JTAG PHY and route to GPIO Matrix
+    gpio_reset_pin(BOARD_PIN_UART_TX);
+    gpio_reset_pin(BOARD_PIN_UART_RX);
+
     const uart_config_t uart_config = {
         .baud_rate = BOARD_UART_BAUDRATE,
         .data_bits = UART_DATA_8_BITS,

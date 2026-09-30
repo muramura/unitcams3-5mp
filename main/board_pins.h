@@ -6,11 +6,16 @@
 // Unit CamS3-5MP Pin Definitions
 // ==========================================
 
-// --- StampFly FC Connection (UART) ---
-#define BOARD_PIN_UART_TX       GPIO_NUM_43   // Connected to StampFly RX
-#define BOARD_PIN_UART_RX       GPIO_NUM_44   // Connected to StampFly TX
+// --- StampFly FC Connection (UART via Grove Port) ---
+// Connected to StampFly Grove Red connector (J3) via straight Grove-to-SH cable
+// Pin 1: CamS3 TX (GPIO 19) <---> StampFly RX (Pin 1, GPIO 15)
+// Pin 2: CamS3 RX (GPIO 20) <---> StampFly TX (Pin 2, GPIO 13)
+// Pin 3: CamS3 5V            <---> StampFly 5V (Pin 3)
+// Pin 4: CamS3 GND           <---> StampFly GND (Pin 4)
+#define BOARD_PIN_UART_TX       GPIO_NUM_19   // Grove Pin 1 (TX to StampFly RX)
+#define BOARD_PIN_UART_RX       GPIO_NUM_20   // Grove Pin 2 (RX from StampFly TX)
 #define BOARD_UART_PORT         UART_NUM_1
-#define BOARD_UART_BAUDRATE     2000000        // Default ArduPilot SERIAL3 baudrate
+#define BOARD_UART_BAUDRATE     2000000        // 2,000,000 bps (2Mbps)
 
 // --- Onboard LED & Button ---
 #define BOARD_PIN_LED           GPIO_NUM_14   // Blue LED (Active LOW in typical M5Stack circuits)
