@@ -1,0 +1,18 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "wifi_ap.c"
+        "mavlink_bridge.c"
+        "camera_stream.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        driver
+        esp_wifi
+        esp_event
+        nvs_flash
+        esp_http_server
+        esp32-camera
+        lwip
+        esp_timer
+)
