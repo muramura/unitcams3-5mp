@@ -32,12 +32,13 @@ static void uart_init_internal(void)
         .source_clk = UART_SCLK_DEFAULT,
     };
 
-    ESP_ERROR_CHECK(uart_driver_install(BOARD_UART_PORT, 2048, 2048, 0, NULL, 0));
+    // 8KB RX buffer to cushion against Wi-Fi task jitter at 2Mbps
+    ESP_ERROR_CHECK(uart_driver_install(BOARD_UART_PORT, 8192, 4096, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(BOARD_UART_PORT, &uart_config));
     ESP_ERROR_CHECK(uart_set_pin(BOARD_UART_PORT, BOARD_PIN_UART_TX, BOARD_PIN_UART_RX,
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
 
-    ESP_LOGI(TAG, "UART%d initialized: TX=GPIO%d, RX=GPIO%d, Baud=%d",
+    ESP_LOGI(TAG, "UART%d initialized: TX=GPIO%d, RX=GPIO%d, Baud=%d (Buffer=8KB)",
              BOARD_UART_PORT, BOARD_PIN_UART_TX, BOARD_PIN_UART_RX, BOARD_UART_BAUDRATE);
 }
 
@@ -49,9 +50,13 @@ static void udp_init_internal(void)
         return;
     }
 
-    // Enable Broadcast so initial packets can reach any connected phone
-    int broadcast_en = 1;
-    setsockopt(s_udp_sock, SOL_SOCKET, SO_BROADCAST, &broadcast_en, sizeof(broadcast_en));
+    int opt = 1;
+    setsockopt(s_udp_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(s_udp_sock, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
+
+    // 100ms receive timeout so recvfrom does not block indefinitely
+    struct timeval tv = { .tv_sec = 0, .tv_usec = 100000 };
+    setsockopt(s_udp_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     struct sockaddr_in bind_addr = {
         .sin_family = AF_INET,
@@ -72,7 +77,7 @@ static void udp_init_internal(void)
     s_client_addr.sin_port = htons(MAVLINK_UDP_PORT);
     inet_aton("192.168.4.255", &s_client_addr.sin_addr);
 
-    ESP_LOGI(TAG, "UDP socket bound to port %d (broadcasting to 192.168.4.255)", MAVLINK_UDP_PORT);
+    ESP_LOGI(TAG, "UDP socket bound to port %d (broadcasting to 192.168.4.255:14550)", MAVLINK_UDP_PORT);
 }
 
 // Task: Reads from StampFly (UART) and sends via UDP to Phone (Mission Planner)
@@ -81,13 +86,12 @@ static void uart_to_udp_task(void *pvParameters)
     uint8_t rx_buf[MAVLINK_BUF_SIZE];
 
     while (1) {
-        int len = uart_read_bytes(BOARD_UART_PORT, rx_buf, sizeof(rx_buf), pdMS_TO_TICKS(10));
+        int len = uart_read_bytes(BOARD_UART_PORT, rx_buf, sizeof(rx_buf), pdMS_TO_TICKS(5));
         if (len > 0 && s_udp_sock >= 0) {
-            int err = sendto(s_udp_sock, rx_buf, len, 0,
+            // Non-blocking send: never freeze the task even if Wi-Fi buffers fill momentarily
+            int err = sendto(s_udp_sock, rx_buf, len, MSG_DONTWAIT,
                              (struct sockaddr *)&s_client_addr, sizeof(s_client_addr));
-            if (err < 0) {
-                ESP_LOGW(TAG, "UDP sendto failed: errno %d", errno);
-            } else {
+            if (err > 0) {
                 s_bytes_uart_to_udp += len;
             }
         }
@@ -99,7 +103,6 @@ static void udp_to_uart_task(void *pvParameters)
 {
     uint8_t rx_buf[MAVLINK_BUF_SIZE];
     struct sockaddr_in from_addr;
-    socklen_t socklen = sizeof(from_addr);
 
     while (1) {
         if (s_udp_sock < 0) {
@@ -107,19 +110,22 @@ static void udp_to_uart_task(void *pvParameters)
             continue;
         }
 
+        socklen_t socklen = sizeof(from_addr);
         int len = recvfrom(s_udp_sock, rx_buf, sizeof(rx_buf), 0,
                            (struct sockaddr *)&from_addr, &socklen);
         if (len > 0) {
-            // Learn the exact client IP address and port from the first incoming packet
+            // CRITICAL FIX: Learn the client IP, but ALWAYS keep destination port FIXED to 14550!
+            // Mission Planner / GCS sends from an ephemeral outbound port, but its listener
+            // is strictly bound to port 14550. Overwriting the port caused complete telemetry freeze!
             if (!s_has_client_addr ||
-                s_client_addr.sin_addr.s_addr != from_addr.sin_addr.s_addr ||
-                s_client_addr.sin_port != from_addr.sin_port) {
-                s_client_addr = from_addr;
+                s_client_addr.sin_addr.s_addr != from_addr.sin_addr.s_addr) {
+                s_client_addr.sin_addr = from_addr.sin_addr;
+                s_client_addr.sin_port = htons(MAVLINK_UDP_PORT); // Always 14550!
                 s_has_client_addr = true;
                 char ip_str[INET_ADDRSTRLEN];
                 inet_ntoa_r(from_addr.sin_addr, ip_str, sizeof(ip_str));
-                ESP_LOGI(TAG, "Discovered active GCS (Mission Planner) at %s:%d - switching to direct unicast",
-                         ip_str, ntohs(from_addr.sin_port));
+                ESP_LOGI(TAG, "Discovered active GCS (Mission Planner) at %s - sending telemetry to %s:%d",
+                         ip_str, ip_str, MAVLINK_UDP_PORT);
             }
 
             // Write to StampFly UART
