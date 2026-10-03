@@ -15,7 +15,7 @@ M5Stack Unit CamS3-5MP 上で動作し、**リアルタイム FPV 映像スト�
 (Mission Planner) ◀──(Wi-Fi: HTTP /stream)─┘   (PY260 Camera)
 ```
 
-- **Wi-Fi SoftAP**: SSID `StampFly-Cam_XXXXXX` (MACアドレス下位3バイトHEX付与, IP: `192.168.4.1`, Pass: `ardupilot123`)
+- **Wi-Fi SoftAP**: SSID `StampFly_XXXXXX` (MACアドレス下位3バイトHEX付与, IP: `192.168.4.1`, Pass: `ardupilot123`)
 - **MAVLink Bridge**: UART (G43/G44 @ 2000000bps (2Mbps)) ⇆ Wi-Fi (UDP 14550) [Core 1]
 - **Video Stream**: 5MP センサー (PY260) による MJPEG ストリーミング [Core 0]
   - URL: `http://192.168.4.1/stream` (Mission Planner / QGC / ブラウザ対応)
@@ -73,7 +73,7 @@ idf.py -p /dev/cu.usbmodem* flash monitor
 1. **CamS3 の電源を投入**
    - 青色 LED がゆっくり点滅（クライアント接続待ち）。
 2. **スマホから Wi-Fi 接続**
-   - SSID: `StampFly-Cam_XXXXXX`（パスワード: `ardupilot123`）に接続。
+   - SSID: `StampFly_XXXXXX`（パスワード: `ardupilot123`）に接続。
    - 接続が完了すると、CamS3 の青色 LED が点灯状態に変わります。
 3. **ブラウザで確認**
    - スマホのブラウザで `http://192.168.4.1/` を開くと、リアルタイムカメラ映像が表示されます。

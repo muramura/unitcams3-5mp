@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include "esp_err.h"
 
-#define WIFI_AP_SSID            "StampFly-Cam"
+#define WIFI_AP_SSID            "StampFly"
 #define WIFI_AP_PASS            "ardupilot123"
 #define WIFI_AP_CHANNEL         6
 #define WIFI_AP_MAX_CONN        4
