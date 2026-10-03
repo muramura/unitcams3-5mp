@@ -10,6 +10,7 @@
 
 static const char *TAG = "wifi_ap";
 static int s_active_clients = 0;
+static char s_actual_ssid[33] = {0};
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
@@ -42,10 +43,17 @@ esp_err_t wifi_ap_init(void)
                                                         NULL,
                                                         NULL));
 
+    // Dynamically append MAC address lower 3 bytes (same mechanism as StampFly / TASK-015)
+    uint8_t mac[6] = {0};
+    esp_err_t ret_mac = esp_efuse_mac_get_custom(mac);
+    if (ret_mac != ESP_OK) {
+        ret_mac = esp_efuse_mac_get_default(mac);
+    }
+    snprintf(s_actual_ssid, sizeof(s_actual_ssid), "%s_%02X%02X%02X",
+             WIFI_AP_SSID, mac[3], mac[4], mac[5]);
+
     wifi_config_t wifi_config = {
         .ap = {
-            .ssid = WIFI_AP_SSID,
-            .ssid_len = strlen(WIFI_AP_SSID),
             .channel = WIFI_AP_CHANNEL,
             .password = WIFI_AP_PASS,
             .max_connection = WIFI_AP_MAX_CONN,
@@ -55,6 +63,11 @@ esp_err_t wifi_ap_init(void)
             },
         },
     };
+    strncpy((char *)wifi_config.ap.ssid, s_actual_ssid, sizeof(wifi_config.ap.ssid) - 1);
+    wifi_config.ap.ssid_len = strlen(s_actual_ssid);
+    if (strlen(WIFI_AP_PASS) > 0) {
+        strncpy((char *)wifi_config.ap.password, WIFI_AP_PASS, sizeof(wifi_config.ap.password) - 1);
+    }
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
@@ -63,10 +76,17 @@ esp_err_t wifi_ap_init(void)
     // Print AP IP address (typically 192.168.4.1)
     esp_netif_ip_info_t ip_info;
     esp_netif_get_ip_info(ap_netif, &ip_info);
-    ESP_LOGI(TAG, "Wi-Fi SoftAP started. SSID: [%s] IP: " IPSTR,
-             WIFI_AP_SSID, IP2STR(&ip_info.ip));
+    ESP_LOGI(TAG, "Wi-Fi SoftAP started. SSID: [%s] (Auth: %s) IP: " IPSTR,
+             s_actual_ssid,
+             (strlen(WIFI_AP_PASS) == 0) ? "OPEN" : "WPA2-PSK",
+             IP2STR(&ip_info.ip));
 
     return ESP_OK;
+}
+
+const char *wifi_ap_get_ssid(void)
+{
+    return s_actual_ssid;
 }
 
 bool wifi_ap_has_client(void)

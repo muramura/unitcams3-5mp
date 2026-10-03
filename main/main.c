@@ -46,8 +46,8 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "===============================================");
     ESP_LOGI(TAG, "  StampFly Companion Computer (Unit CamS3-5MP)");
-    ESP_LOGI(TAG, "  - UART MAVLink Bridge: G43 (TX) / G44 (RX)");
-    ESP_LOGI(TAG, "  - Wi-Fi SoftAP: SSID [StampFly-Cam] 192.168.4.1");
+    ESP_LOGI(TAG, "  - UART MAVLink Bridge: Grove G19 (TX) / G20 (RX)");
+    ESP_LOGI(TAG, "  - Wi-Fi SoftAP: 192.168.4.1");
     ESP_LOGI(TAG, "  - Video Stream: http://192.168.4.1/stream");
     ESP_LOGI(TAG, "===============================================");
 
@@ -66,8 +66,9 @@ void app_main(void)
     // 3. Initialize Wi-Fi Access Point
     ESP_LOGI(TAG, "Starting Wi-Fi Access Point...");
     ESP_ERROR_CHECK(wifi_ap_init());
+    ESP_LOGI(TAG, "  - Wi-Fi SoftAP active: SSID [%s] (192.168.4.1)", wifi_ap_get_ssid());
 
-    // 4. Initialize MAVLink Bridge (UART G43/G44 <-> UDP 14550) on Core 1
+    // 4. Initialize MAVLink Bridge (UART Grove G19/G20 <-> UDP 14550) on Core 1
     ESP_LOGI(TAG, "Starting MAVLink Bridge...");
     ESP_ERROR_CHECK(mavlink_bridge_init());
 
