@@ -6,7 +6,7 @@
 #include "driver/gpio.h"
 #include "board_pins.h"
 #include "wifi_ap.h"
-#include "mavlink_bridge.h"
+#include "mavlink_router.h"
 #include "camera_stream.h"
 
 static const char *TAG = "main";
@@ -46,9 +46,9 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "===============================================");
     ESP_LOGI(TAG, "  StampFly Companion Computer (Unit CamS3-5MP)");
-    ESP_LOGI(TAG, "  - UART MAVLink Bridge: Grove G19 (TX) / G20 (RX)");
+    ESP_LOGI(TAG, "  - MAVLink Router (Core 1): Grove G19 (TX) / G20 (RX) @ 2Mbps <-> UDP 14550");
     ESP_LOGI(TAG, "  - Wi-Fi SoftAP: 192.168.4.1");
-    ESP_LOGI(TAG, "  - Video Stream: http://192.168.4.1/stream");
+    ESP_LOGI(TAG, "  - Video Stream (Core 0): http://192.168.4.1/stream");
     ESP_LOGI(TAG, "===============================================");
 
     // 1. Initialize NVS
@@ -68,14 +68,14 @@ void app_main(void)
     ESP_ERROR_CHECK(wifi_ap_init());
     ESP_LOGI(TAG, "  - Wi-Fi SoftAP active: SSID [%s] (192.168.4.1)", wifi_ap_get_ssid());
 
-    // 4. Initialize MAVLink Bridge (UART Grove G19/G20 <-> UDP 14550) on Core 1
-    ESP_LOGI(TAG, "Starting MAVLink Bridge...");
-    ESP_ERROR_CHECK(mavlink_bridge_init());
+    // 4. Initialize MAVLink Multi-Endpoint Router on Core 1 (UART Grove G19/G20 <-> UDP 14550)
+    ESP_LOGI(TAG, "Starting MAVLink Multi-Endpoint Router...");
+    ESP_ERROR_CHECK(mavlink_router_init());
 
-    // 5. Initialize Camera and Video Stream on Core 0
-    ESP_LOGI(TAG, "Initializing 5MP Camera...");
+    // 5. Initialize Camera and Video Stream on Core 0 (Concurrently with MAVLink Router)
+    ESP_LOGI(TAG, "Initializing 5MP Camera for Live Video Streaming...");
     if (camera_init() == ESP_OK) {
-        ESP_LOGI(TAG, "Starting HTTP Video Streaming Server...");
+        ESP_LOGI(TAG, "Starting HTTP Video Streaming Server (/stream)...");
         camera_stream_start();
     } else {
         ESP_LOGE(TAG, "Camera initialization failed! Continuing in telemetry-only mode.");

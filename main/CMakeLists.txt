@@ -2,8 +2,11 @@ idf_component_register(
     SRCS
         "main.c"
         "wifi_ap.c"
-        "mavlink_bridge.c"
+        "mavlink_router.c"
         "camera_stream.c"
+        "vision_pipeline.c"
+        "marker_detector.c"
+        "optical_flow.c"
     INCLUDE_DIRS
         "."
     REQUIRES
@@ -15,4 +18,6 @@ idf_component_register(
         esp32-camera
         lwip
         esp_timer
+        soc
+        esp_hw_support
 )
