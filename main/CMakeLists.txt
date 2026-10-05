@@ -16,6 +16,7 @@ idf_component_register(
         nvs_flash
         esp_http_server
         esp32-camera
+        espressif__esp_jpeg
         lwip
         esp_timer
         soc

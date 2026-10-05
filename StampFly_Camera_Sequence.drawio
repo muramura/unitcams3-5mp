@@ -1,0 +1,524 @@
+<?xml version="1.0" ?>
+<mxfile host="Electron" modified="2026-10-05T09:00:00.000Z" agent="Antigravity IDE" version="21.0.0" type="device">
+  
+  
+  <diagram id="stampfly-camera-sequence" name="StampFly Camera &amp; Vision Sequence">
+    
+    
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1850" pageHeight="1150" math="0" shadow="0" background="#ffffff">
+      
+      
+      <root>
+        
+        
+        <mxCell id="0"/>
+        
+        
+        <mxCell id="1" parent="0"/>
+        
+        
+        <mxCell id="title" value="&lt;h2 style=&quot;margin:0;color:#003366;&quot;&gt;🚁 StampFly Companion (CamS3-5MP) カメラ画像配信・オプティカルフロー 並列シーケンス図&lt;/h2&gt;&lt;p style=&quot;margin:4px 0 0 0;font-size:12px;color:#555;&quot;&gt;単一のPY260カメラセンサーから【動画像ストリーム(Wi-Fi HTTP)】と【静止画オプティカルフロー(MAVLink #100)】をゼロコピー並列処理&lt;/p&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          
+          
+          <mxGeometry x="40" y="15" width="1200" height="40" as="geometry"/>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="p_user" value="&lt;b&gt;操縦者&lt;/b&gt;&lt;br/&gt;(PC / ユーザー)" style="shape=umlLifeline;participant=umlActor;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;verticalAlign=bottom;size=50;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" vertex="1" parent="1">
+          
+          
+          <mxGeometry x="40" y="70" width="140" height="980" as="geometry"/>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="p_mp" value="&lt;b&gt;💻 Mission Planner&lt;/b&gt;&lt;br/&gt;(GCS / QGC)" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;size=55;fillColor=#dae8fc;strokeColor=#6c8ebf;fontColor=#003366;" vertex="1" parent="1">
+          
+          
+          <mxGeometry x="240" y="70" width="150" height="980" as="geometry"/>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="p_http" value="&lt;b&gt;🌐 HTTP配信タスク&lt;/b&gt;&lt;br/&gt;(Core 0 / ポート80)" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;size=55;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#1e4620;" vertex="1" parent="1">
+          
+          
+          <mxGeometry x="460" y="70" width="160" height="980" as="geometry"/>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="p_camdrv" value="&lt;b&gt;💾 カメラDMA / バッファ&lt;/b&gt;&lt;br/&gt;(esp_camera / PSRAM)" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;size=55;fillColor=#ffe6cc;strokeColor=#d79b00;fontColor=#804d00;" vertex="1" parent="1">
+          
+          
+          <mxGeometry x="690" y="70" width="160" height="980" as="geometry"/>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="p_sensor" value="&lt;b&gt;📷 PY260 センサー&lt;/b&gt;&lt;br/&gt;(DVP 5MPハードウェア)" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;size=55;fillColor=#fff2cc;strokeColor=#d6b656;fontColor=#665200;" vertex="1" parent="1">
+          
+          
+          <mxGeometry x="920" y="70" width="160" height="980" as="geometry"/>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="p_flow" value="&lt;b&gt;⚡ オプティカルフロー演算&lt;/b&gt;&lt;br/&gt;(Core 0 / ブロックマッチ)" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;size=55;fillColor=#e1d5e7;strokeColor=#9673a6;fontColor=#3b1e54;" vertex="1" parent="1">
+          
+          
+          <mxGeometry x="1150" y="70" width="160" height="980" as="geometry"/>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="p_router" value="&lt;b&gt;🔀 MAVLinkルーター&lt;/b&gt;&lt;br/&gt;(Core 1 / マルチ配信)" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;size=55;fillColor=#f8cecc;strokeColor=#b85450;fontColor=#660000;" vertex="1" parent="1">
+          
+          
+          <mxGeometry x="1380" y="70" width="160" height="980" as="geometry"/>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="p_fc" value="&lt;b&gt;🚁 StampFly FC&lt;/b&gt;&lt;br/&gt;(ArduPilot EKF3)" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;size=55;fillColor=#f5f5f5;strokeColor=#333333;fontColor=#111111;fontStyle=1;" vertex="1" parent="1">
+          
+          
+          <mxGeometry x="1610" y="70" width="160" height="980" as="geometry"/>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="frame1" value="&lt;b&gt;【1. 初期接続フェーズ】&lt;/b&gt;" style="shape=umlFrame;whiteSpace=wrap;html=1;width=280;height=26;fillColor=#f8f9fa;strokeColor=#6c757d;fontColor=#343a40;strokeWidth=1.5;align=left;spacingLeft=10;" vertex="1" parent="1">
+          
+          
+          <mxGeometry x="30" y="140" width="580" height="110" as="geometry"/>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m1" value="1. 動画表示開始 (HUD右クリック ➔ Set MJPEG Source)" style="html=1;verticalAlign=bottom;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;fontColor=#222;fontSize=11;strokeWidth=1.5;strokeColor=#0052cc;;endArrow=block;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="110" y="175" as="sourcePoint"/>
+            
+            
+            <mxPoint x="315" y="175" as="targetPoint"/>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m2" value="2. HTTP GET /stream (Wi-Fi SoftAP TCP ポート80)" style="html=1;verticalAlign=bottom;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;fontColor=#222;fontSize=11;strokeWidth=1.5;strokeColor=#0052cc;;endArrow=block;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="315" y="205" as="sourcePoint"/>
+            
+            
+            <mxPoint x="540" y="205" as="targetPoint"/>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m3" value="3. 200 OK (multipart/x-mixed-replace; boundary=...)" style="html=1;verticalAlign=bottom;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;fontColor=#222;fontSize=11;strokeWidth=1.5;strokeColor=#28a745;;dashed=1;endArrow=open;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="540" y="235" as="sourcePoint"/>
+            
+            
+            <mxPoint x="315" y="235" as="targetPoint"/>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="frame2" value="&lt;b&gt;【2. 毎フレームの並列処理サイクル (約30fps / 周期 33ms)】&lt;/b&gt;" style="shape=umlFrame;whiteSpace=wrap;html=1;width=280;height=26;fillColor=#f0f7ff;strokeColor=#007acc;fontColor=#004085;strokeWidth=1.5;align=left;spacingLeft=10;" vertex="1" parent="1">
+          
+          
+          <mxGeometry x="30" y="270" width="1750" height="480" as="geometry"/>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m4" value="4. 光学露光 ＆ 画素転送 (DVP DMA ➔ PSRAMへ自動DMA転送)" style="html=1;verticalAlign=bottom;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;fontColor=#222;fontSize=11;strokeWidth=1.5;strokeColor=#d39e00;;endArrow=block;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="1000" y="310" as="sourcePoint"/>
+            
+            
+            <mxPoint x="770" y="310" as="targetPoint"/>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m5" value="5. ダブルバッファ(2面)の非アクティブ面に完全格納" style="html=1;align=left;spacingLeft=5;verticalAlign=middle;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;endArrow=block;fontColor=#333;fontSize=11;strokeWidth=1.5;strokeColor=#e67e22;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="770" y="335" as="sourcePoint"/>
+            
+            
+            <mxPoint x="770" y="360" as="targetPoint"/>
+            
+            
+            <Array as="points">
+              
+              
+              <mxPoint x="815" y="335"/>
+              
+              
+              <mxPoint x="815" y="360"/>
+              
+            
+            </Array>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m6" value="6. esp_camera_fb_get() [最新完了フレームを要求]" style="html=1;verticalAlign=bottom;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;fontColor=#222;fontSize=11;strokeWidth=1.5;strokeColor=#28a745;;endArrow=block;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="540" y="380" as="sourcePoint"/>
+            
+            
+            <mxPoint x="770" y="380" as="targetPoint"/>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m7" value="7. フレームバッファポインタ返却 (camera_fb_t *fb)" style="html=1;verticalAlign=bottom;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;fontColor=#222;fontSize=11;strokeWidth=1.5;strokeColor=#28a745;;dashed=1;endArrow=open;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="770" y="410" as="sourcePoint"/>
+            
+            
+            <mxPoint x="540" y="410" as="targetPoint"/>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="sub_frame_a" value="&lt;b&gt;【ルートA: 動画像ストリーム配信 (Wi-Fi)】&lt;/b&gt;" style="shape=umlFrame;whiteSpace=wrap;html=1;width=280;height=26;fillColor=#e8f4fd;strokeColor=#17a2b8;fontColor=#0c5460;strokeWidth=1.5;align=left;spacingLeft=10;" vertex="1" parent="1">
+          
+          
+          <mxGeometry x="70" y="440" width="540" height="180" as="geometry"/>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m8" value="8. JPEGチャンク送信 (境界 + Content-Length + 画素データ)" style="html=1;verticalAlign=bottom;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;fontColor=#222;fontSize=11;strokeWidth=1.5;strokeColor=#007bff;strokeWidth=2;;endArrow=block;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="540" y="490" as="sourcePoint"/>
+            
+            
+            <mxPoint x="315" y="490" as="targetPoint"/>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m9" value="9. HUD上にリアルタイムFPV映像を描画表示" style="html=1;verticalAlign=bottom;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;fontColor=#222;fontSize=11;strokeWidth=1.5;strokeColor=#007bff;strokeWidth=2;;endArrow=block;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="315" y="530" as="sourcePoint"/>
+            
+            
+            <mxPoint x="110" y="530" as="targetPoint"/>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m9_note" value="※ TCP_NODELAY でバッファリング遅延ゼロ" style="html=1;verticalAlign=bottom;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;fontColor=#222;fontSize=11;strokeWidth=1.5;strokeColor=#6c757d;fontStyle=2;;dashed=1;endArrow=open;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="540" y="570" as="sourcePoint"/>
+            
+            
+            <mxPoint x="315" y="570" as="targetPoint"/>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="sub_frame_b" value="&lt;b&gt;【ルートB: 静止画フレーム取り込み ＆ オプティカルフロー演算】&lt;/b&gt;" style="shape=umlFrame;whiteSpace=wrap;html=1;width=280;height=26;fillColor=#f0fff4;strokeColor=#28a745;fontColor=#155724;strokeWidth=1.5;align=left;spacingLeft=10;" vertex="1" parent="1">
+          
+          
+          <mxGeometry x="680" y="440" width="830" height="240" as="geometry"/>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m10" value="10. 同一フレーム(fb)から輝度(Y成分)・ブロック抽出 [ゼロコピー]" style="html=1;verticalAlign=bottom;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;fontColor=#222;fontSize=11;strokeWidth=1.5;strokeColor=#20c997;strokeWidth=2;;endArrow=block;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="1230" y="490" as="sourcePoint"/>
+            
+            
+            <mxPoint x="770" y="490" as="targetPoint"/>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m11" value="11. サドル差分(SAD)ブロックマッチング演算&#10;    前フレームと現フレームを比較 ➔ dx, dy, 品質スコア算出" style="html=1;align=left;spacingLeft=5;verticalAlign=middle;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;endArrow=block;fontColor=#333;fontSize=11;strokeWidth=1.5;strokeColor=#6f42c1;strokeWidth=2;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="1230" y="530" as="sourcePoint"/>
+            
+            
+            <mxPoint x="1230" y="570" as="targetPoint"/>
+            
+            
+            <Array as="points">
+              
+              
+              <mxPoint x="1280" y="530"/>
+              
+              
+              <mxPoint x="1280" y="570"/>
+              
+            
+            </Array>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m12" value="12. MAVLink #100 (OPTICAL_FLOW) パケットエンコード ＆ 受渡" style="html=1;verticalAlign=bottom;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;fontColor=#222;fontSize=11;strokeWidth=1.5;strokeColor=#e83e8c;strokeWidth=2;;endArrow=block;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="1230" y="610" as="sourcePoint"/>
+            
+            
+            <mxPoint x="1460" y="610" as="targetPoint"/>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m13" value="13. esp_camera_fb_return(fb) [両ルート処理完了後にフレーム解放]" style="html=1;verticalAlign=bottom;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;fontColor=#222;fontSize=11;strokeWidth=1.5;strokeColor=#6c757d;;endArrow=block;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="540" y="700" as="sourcePoint"/>
+            
+            
+            <mxPoint x="770" y="700" as="targetPoint"/>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="frame3" value="&lt;b&gt;【3. MAVLink #100 (OPTICAL_FLOW) の二重送信 (StampFly FC ＆ GCS)】&lt;/b&gt;" style="shape=umlFrame;whiteSpace=wrap;html=1;width=280;height=26;fillColor=#fffbf0;strokeColor=#fd7e14;fontColor=#856404;strokeWidth=1.5;align=left;spacingLeft=10;" vertex="1" parent="1">
+          
+          
+          <mxGeometry x="200" y="770" width="1580" height="220" as="geometry"/>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m14" value="14. UART送信 (Groveポート 2Mbps 高速シリアル) ➔ MAVLink #100" style="html=1;verticalAlign=bottom;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;fontColor=#222;fontSize=11;strokeWidth=1.5;strokeColor=#dc3545;strokeWidth=2.5;;endArrow=block;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="1460" y="815" as="sourcePoint"/>
+            
+            
+            <mxPoint x="1690" y="815" as="targetPoint"/>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m15" value="15. ArduPilot EKF3 がオプティカルフロー速度を積分&#10;    水平ドリフトを相殺し、高精度自律ホバリング制御" style="html=1;align=left;spacingLeft=5;verticalAlign=middle;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;endArrow=block;fontColor=#333;fontSize=11;strokeWidth=1.5;strokeColor=#d9534f;strokeWidth=2;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="1690" y="845" as="sourcePoint"/>
+            
+            
+            <mxPoint x="1690" y="880" as="targetPoint"/>
+            
+            
+            <Array as="points">
+              
+              
+              <mxPoint x="1740" y="845"/>
+              
+              
+              <mxPoint x="1740" y="880"/>
+              
+            
+            </Array>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m16" value="16. Wi-Fi UDP 14550 送信 (ブロードキャスト / ユニキャスト) ➔ MAVLink #100" style="html=1;verticalAlign=bottom;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;fontColor=#222;fontSize=11;strokeWidth=1.5;strokeColor=#007bff;strokeWidth=2;;endArrow=block;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="1460" y="905" as="sourcePoint"/>
+            
+            
+            <mxPoint x="315" y="905" as="targetPoint"/>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="m17" value="17. Mission Planner 画面上にオプティカルフロー品質・運動ベクトル表示" style="html=1;verticalAlign=bottom;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;fontColor=#222;fontSize=11;strokeWidth=1.5;strokeColor=#007bff;;endArrow=block;;labelBackgroundColor=#ffffff;labelBorderColor=none;" edge="1" parent="1">
+          
+          
+          <mxGeometry relative="1" as="geometry">
+            
+            
+            <mxPoint x="315" y="940" as="sourcePoint"/>
+            
+            
+            <mxPoint x="110" y="940" as="targetPoint"/>
+            
+          
+          </mxGeometry>
+          
+        
+        </mxCell>
+        
+        
+        <mxCell id="note_box" value="&lt;b&gt;【核心設計ハイライト】&lt;/b&gt;&lt;br/&gt;① &lt;b&gt;ゼロコピー並列化&lt;/b&gt;: 単一の &lt;code&gt;camera_fb_t *fb&lt;/code&gt; を HTTP送信タスクとフロー演算タスクが共有参照。&lt;br/&gt;② &lt;b&gt;Core0 / Core1 分離&lt;/b&gt;: 負荷の高い画像処理・Wi-Fi動画送信を &lt;b&gt;Core 0&lt;/b&gt;、超低遅延が要求されるMAVLink UARTルーターを &lt;b&gt;Core 1&lt;/b&gt; に完全分離。" style="shape=note;whiteSpace=wrap;html=1;size=14;verticalAlign=top;align=left;spacingLeft=10;fillColor=#fff9c4;strokeColor=#fbc02d;fontColor=#444;fontSize=11;" vertex="1" parent="1">
+          
+          
+          <mxGeometry x="40" y="1010" width="1050" height="60" as="geometry"/>
+          
+        
+        </mxCell>
+        
+      
+      </root>
+      
+    
+    </mxGraphModel>
+    
+  
+  </diagram>
+  
+
+</mxfile>

@@ -8,6 +8,19 @@
 #define MAVLINK_MSG_ID_HEARTBEAT_LEN 9
 #define MAVLINK_MSG_ID_HEARTBEAT_CRC_EXTRA 50
 
+#define MAVLINK_MSG_ID_STATUSTEXT 253
+#define MAVLINK_MSG_ID_STATUSTEXT_LEN 51
+#define MAVLINK_MSG_ID_STATUSTEXT_CRC_EXTRA 83
+
+#define MAV_SEVERITY_EMERGENCY 0
+#define MAV_SEVERITY_ALERT     1
+#define MAV_SEVERITY_CRITICAL  2
+#define MAV_SEVERITY_ERROR     3
+#define MAV_SEVERITY_WARNING   4
+#define MAV_SEVERITY_NOTICE    5
+#define MAV_SEVERITY_INFO      6
+#define MAV_SEVERITY_DEBUG     7
+
 #define MAV_TYPE_ONBOARD_CONTROLLER 18
 #define MAV_AUTOPILOT_INVALID 8
 #define MAV_STATE_ACTIVE 4
@@ -68,4 +81,49 @@ static inline uint16_t mavlink_pack_heartbeat_v2(uint8_t *buf, uint8_t *seq)
     buf[20] = (uint8_t)((crc >> 8) & 0xFF);
 
     return 21;
+}
+
+/**
+ * @brief Pack a STATUSTEXT message (MAVLink v2) for CamS3 Diagnostics & Logging
+ *
+ * @param buf Output buffer (must be at least 63 bytes)
+ * @param seq Pointer to running sequence number (incremented automatically)
+ * @param severity Severity level (MAV_SEVERITY_INFO, MAV_SEVERITY_ERROR, etc.)
+ * @param text Status string (up to 49 characters)
+ * @return Total packet length in bytes (63 bytes)
+ */
+static inline uint16_t mavlink_pack_statustext_v2(uint8_t *buf, uint8_t *seq, uint8_t severity, const char *text)
+{
+    // MAVLink v2 Header (10 bytes)
+    buf[0] = MAVLINK_V2_MAGIC;
+    buf[1] = MAVLINK_MSG_ID_STATUSTEXT_LEN;     // 51 bytes payload
+    buf[2] = 0x00;                              // Incompat flags
+    buf[3] = 0x00;                              // Compat flags
+    buf[4] = (*seq)++;                          // Sequence number
+    buf[5] = 1;                                 // System ID: 1
+    buf[6] = MAV_COMP_ID_OPTICAL_FLOW;          // Component ID: 197
+    buf[7] = MAVLINK_MSG_ID_STATUSTEXT;         // Message ID: 253
+    buf[8] = 0x00;
+    buf[9] = 0x00;
+
+    // Payload (51 bytes)
+    // Offset 0: severity
+    buf[10] = severity;
+    // Offset 1..50: text (null padded)
+    memset(&buf[11], 0, 50);
+    if (text) {
+        strncpy((char *)&buf[11], text, 49);
+    }
+
+    // CRC Calculation (Header bytes 1..9 + Payload 51 bytes + CRC_EXTRA 83)
+    uint16_t crc = 0xFFFF;
+    for (int i = 1; i < 61; i++) {
+        mavlink_crc_accumulate_hb(buf[i], &crc);
+    }
+    mavlink_crc_accumulate_hb(MAVLINK_MSG_ID_STATUSTEXT_CRC_EXTRA, &crc);
+
+    buf[61] = (uint8_t)(crc & 0xFF);
+    buf[62] = (uint8_t)((crc >> 8) & 0xFF);
+
+    return 63;
 }

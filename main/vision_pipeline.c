@@ -107,7 +107,7 @@ static void vision_dispatcher_task(void *pvParameters)
         if (decimation_counter >= 5) {
             decimation_counter = 0;
             if (marker_detector_process(w, h, fb_curr->buf, &target)) {
-                // Send MAVLink #149 LANDING_TARGET to StampFly
+                // Send MAVLink #149 LANDING_TARGET via Dual-Queue Router
                 uint16_t lt_len = mavlink_pack_landing_target_v2(
                     mav_packet,
                     (uint64_t)now_us,
@@ -119,7 +119,6 @@ static void vision_dispatcher_task(void *pvParameters)
                     (target.height / (float)h),
                     &s_mav_seq
                 );
-                // Transmit LANDING_TARGET simultaneously to StampFly (UART) and all GCS (Wi-Fi UDP)
                 mavlink_router_send_internal(mav_packet, lt_len, MAV_ROUTE_DEST_ALL);
             }
         }
@@ -130,7 +129,6 @@ static void vision_dispatcher_task(void *pvParameters)
             last_hb_us = now_us;
             uint8_t hb_packet[32];
             uint16_t hb_len = mavlink_pack_heartbeat_v2(hb_packet, &s_mav_seq);
-            // Transmit periodic 1Hz HEARTBEAT to both StampFly and GCS
             mavlink_router_send_internal(hb_packet, hb_len, MAV_ROUTE_DEST_ALL);
         }
 

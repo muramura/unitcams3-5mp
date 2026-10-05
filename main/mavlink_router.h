@@ -56,6 +56,23 @@ esp_err_t mavlink_router_send_internal(const uint8_t *packet, uint16_t length, m
  */
 int mavlink_router_get_active_client_count(void);
 
+/**
+ * @brief Router queue statistics structure
+ */
+typedef struct {
+    uint32_t fc_tx_drops;
+    uint32_t wifi_tx_drops;
+    uint32_t bytes_to_fc;
+    uint32_t bytes_to_wifi;
+    uint32_t bytes_from_fc;
+    uint32_t bytes_from_wifi;
+} mavlink_router_stats_t;
+
+/**
+ * @brief Retrieve current queue drop counts and throughput statistics
+ */
+void mavlink_router_get_stats(mavlink_router_stats_t *stats);
+
 #ifdef __cplusplus
 }
 #endif

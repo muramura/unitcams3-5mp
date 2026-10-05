@@ -43,6 +43,16 @@ esp_err_t optical_flow_start(void);
  */
 void optical_flow_get_latest(optical_flow_metrics_t *metrics);
 
+/**
+ * @brief Start a standalone dummy test task sending fixed OPTICAL_FLOW (#100) messages.
+ * Transmits fixed values (dx=123, dy=-456, quality=200, dist=0.5m) at 10Hz to both FC and GCS.
+ * Used to verify the communication link before camera activation.
+ * 
+ * @return ESP_OK on success, or error code
+ */
+esp_err_t optical_flow_dummy_start(void);
+
+
 #ifdef __cplusplus
 }
 #endif
