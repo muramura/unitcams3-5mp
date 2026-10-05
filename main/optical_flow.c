@@ -13,6 +13,7 @@
 #include "mavlink_optical_flow_pack.h"
 #include "mavlink_landing_target_pack.h"
 #include "jpeg_decoder.h"
+#include "camera_stream.h"
 
 static const char *TAG = "optical_flow";
 
@@ -182,6 +183,11 @@ static void optical_flow_cam_task(void *pvParameters)
         if (!fb_curr) {
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
+        }
+
+        // On-demand frame sharing: push JPEG frame to streaming task if any client is watching
+        if (camera_stream_has_client()) {
+            camera_stream_push_frame(fb_curr->buf, fb_curr->len);
         }
 
         // Fast hardware/DSP JPEG decode: VGA (640x480) -> 1/4 scale (160x120 RGB565)
