@@ -236,7 +236,6 @@ static void optical_flow_cam_task(void *pvParameters)
         // Run 4-Block ARPS if we have a previous reference frame
         if (s_has_prev_frame) {
             uint16_t w = BM_WIDTH;
-            uint16_t h = BM_HEIGHT;
             int p = cams3_param_get_int("FLOW_PMAX");
             if (p < 4) p = 4;
             if (p > 12) p = 12; // Clamp to 12 for safe 4-block layout margins
@@ -523,7 +522,7 @@ esp_err_t optical_flow_init(void)
         s->set_vflip(s, cams3_param_get_int("CAM_VFLIP"));
         s->set_hmirror(s, cams3_param_get_int("CAM_HMIRROR"));
         ESP_LOGI(TAG, "PY260 Camera successfully initialized! (PID: 0x%04x, VFLIP=%d, HMIRROR=%d)",
-                 s->id.PID, cams3_param_get_int("CAM_VFLIP"), cams3_param_get_int("CAM_HMIRROR"));
+                 s->id.PID, (int)cams3_param_get_int("CAM_VFLIP"), (int)cams3_param_get_int("CAM_HMIRROR"));
     }
 
     s_camera_ready = true;
