@@ -7,6 +7,7 @@ idf_component_register(
         "vision_pipeline.c"
         "marker_detector.c"
         "optical_flow.c"
+        "cams3_params.c"
     INCLUDE_DIRS
         "."
     REQUIRES

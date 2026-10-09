@@ -17,6 +17,7 @@ typedef struct {
     uint8_t quality;     // Surface texture quality (0-255)
     uint32_t dt_us;      // Frame delta time in microseconds
     float fps;           // Calculated optical flow frame rate
+    float distance_m;    // Estimated ground distance in meters
 } optical_flow_metrics_t;
 
 /**
@@ -42,6 +43,22 @@ esp_err_t optical_flow_start(void);
  * @param metrics Pointer to destination struct
  */
 void optical_flow_get_latest(optical_flow_metrics_t *metrics);
+
+/**
+ * @brief Feed incoming MAVLink telemetry packets (VFR_HUD, GLOBAL_POSITION_INT)
+ * from StampFly FC to update vehicle velocity, climb rate, and baro altitude.
+ * 
+ * @param buf Raw MAVLink packet buffer
+ * @param len Buffer length in bytes
+ */
+void optical_flow_feed_mavlink(const uint8_t *buf, uint16_t len);
+
+/**
+ * @brief Retrieve current estimated ground distance in meters.
+ * 
+ * @return float Estimated distance (e.g. 0.45m)
+ */
+float optical_flow_get_estimated_distance(void);
 
 /**
  * @brief Start a standalone dummy test task sending fixed OPTICAL_FLOW (#100) messages.

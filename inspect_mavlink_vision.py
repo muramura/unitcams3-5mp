@@ -156,6 +156,75 @@ def verify_constructors():
         else:
             print("  ❌ Failed to parse HEARTBEAT packet!")
 
+    # -------------------------------------------------------------
+    # 4. PARAM_VALUE (#22) Constructor Check
+    # -------------------------------------------------------------
+    print("\n[4] Testing PARAM_VALUE (#22) Constructor...")
+    param_id_b = b"FLOW_SCALE\x00\x00\x00\x00\x00\x00"
+    val = 1.0
+    header_pv = struct.pack('<BBBBBBBHB', 0xFD, 25, 0, 0, 1, 1, 197, 22, 0)
+    # Wire order: float param_value (4), uint16 count (2), uint16 index (2), char[16] id, uint8 type (1)
+    payload_pv = struct.pack('<fHH16sB', val, 12, 0, param_id_b, 9)
+    crc_pv = 0xFFFF
+    for b in header_pv[1:]: crc_pv = crc16_accumulate(b, crc_pv)
+    for b in payload_pv: crc_pv = crc16_accumulate(b, crc_pv)
+    crc_pv = crc16_accumulate(220, crc_pv) # CRC_EXTRA 220
+    pkt_pv = header_pv + payload_pv + struct.pack('<H', crc_pv)
+
+    print(f"  - Constructed Packet Length: {len(pkt_pv)} bytes (Expected: 37)")
+    print(f"  - Hex Dump: {pkt_pv.hex()}")
+
+    if mavlink2:
+        mav = mavlink2.MAVLink(None)
+        decoded_pv = None
+        for b in pkt_pv:
+            msg = mav.parse_char(bytes([b]))
+            if msg:
+                decoded_pv = msg
+                break
+        if decoded_pv:
+            print("  - Decoded via pymavlink:")
+            print(f"    * MSG ID: {decoded_pv.get_msgId()} (PARAM_VALUE)")
+            print(f"    * param_id: {decoded_pv.param_id}")
+            print(f"    * param_value: {decoded_pv.param_value}")
+            print(f"    * param_count: {decoded_pv.param_count}, param_index: {decoded_pv.param_index}")
+            assert "FLOW_SCALE" in decoded_pv.param_id
+            print("  ✅ PARAM_VALUE Constructor Verification: PASSED!")
+        else:
+            print("  ❌ Failed to parse PARAM_VALUE packet!")
+
+    # -------------------------------------------------------------
+    # 5. COMMAND_ACK (#77) Constructor Check
+    # -------------------------------------------------------------
+    print("\n[5] Testing COMMAND_ACK (#77) Constructor...")
+    header_ack = struct.pack('<BBBBBBBHB', 0xFD, 3, 0, 0, 1, 1, 197, 77, 0)
+    payload_ack = struct.pack('<HB', 245, 0) # MAV_CMD_PREFLIGHT_STORAGE (245), MAV_RESULT_ACCEPTED (0)
+    crc_ack = 0xFFFF
+    for b in header_ack[1:]: crc_ack = crc16_accumulate(b, crc_ack)
+    for b in payload_ack: crc_ack = crc16_accumulate(b, crc_ack)
+    crc_ack = crc16_accumulate(143, crc_ack) # CRC_EXTRA 143
+    pkt_ack = header_ack + payload_ack + struct.pack('<H', crc_ack)
+
+    print(f"  - Constructed Packet Length: {len(pkt_ack)} bytes (Expected: 15)")
+    print(f"  - Hex Dump: {pkt_ack.hex()}")
+
+    if mavlink2:
+        mav = mavlink2.MAVLink(None)
+        decoded_ack = None
+        for b in pkt_ack:
+            msg = mav.parse_char(bytes([b]))
+            if msg:
+                decoded_ack = msg
+                break
+        if decoded_ack:
+            print("  - Decoded via pymavlink:")
+            print(f"    * MSG ID: {decoded_ack.get_msgId()} (COMMAND_ACK)")
+            print(f"    * command: {decoded_ack.command}, result: {decoded_ack.result}")
+            assert decoded_ack.command == 245
+            print("  ✅ COMMAND_ACK Constructor Verification: PASSED!")
+        else:
+            print("  ❌ Failed to parse COMMAND_ACK packet!")
+
     print("\n" + "=" * 60)
     print(" 🎉 All MAVLink Constructors Verified Successfully!")
     print("=" * 60)

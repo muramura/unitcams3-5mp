@@ -13,7 +13,7 @@
 #include "mavlink_optical_flow_pack.h"
 #include "mavlink_landing_target_pack.h"
 #include "jpeg_decoder.h"
-#include "camera_stream.h"
+#include "cams3_params.h"
 
 static const char *TAG = "optical_flow";
 
@@ -38,6 +38,24 @@ static int32_t s_accum_dy = 0;
 static uint8_t s_last_quality = 0;
 static int64_t s_last_frame_us = 0;
 static uint32_t s_new_frames_count = 0;
+
+// Vehicle Telemetry State (Intercepted from StampFly FC MAVLink Stream)
+typedef struct {
+    float vz_climb;      // Vertical climb speed (m/s, positive = climb, negative = descend)
+    float vx;            // Horizontal velocity X (m/s)
+    float vy;            // Horizontal velocity Y (m/s)
+    float baro_alt;      // Baro / EKF relative altitude (meters)
+    int64_t last_update_us;
+    bool has_telem;
+} vehicle_telemetry_t;
+
+static portMUX_TYPE s_telem_lock = portMUX_INITIALIZER_UNLOCKED;
+static vehicle_telemetry_t s_vehicle_telem = {0};
+
+static float s_estimated_distance = 0.30f; // Default 30cm hover distance
+static float s_last_divergence = 0.0f;
+static float s_last_baro_alt = 0.0f;
+static bool s_has_initial_baro = false;
 
 // ARPS algorithm helper buffers
 static bool s_bm_done[2 * BM_PMAX + 1][2 * BM_PMAX + 1];
@@ -185,11 +203,6 @@ static void optical_flow_cam_task(void *pvParameters)
             continue;
         }
 
-        // On-demand frame sharing: push JPEG frame to streaming task if any client is watching
-        if (camera_stream_has_client()) {
-            camera_stream_push_frame(fb_curr->buf, fb_curr->len);
-        }
-
         // Fast hardware/DSP JPEG decode: VGA (640x480) -> 1/4 scale (160x120 RGB565)
         esp_jpeg_image_cfg_t jpeg_cfg = {
             .indata = fb_curr->buf,
@@ -220,29 +233,114 @@ static void optical_flow_cam_task(void *pvParameters)
 
         int64_t now_us = esp_timer_get_time();
 
-        // Run ARPS if we have a previous reference frame
+        // Run 4-Block ARPS if we have a previous reference frame
         if (s_has_prev_frame) {
             uint16_t w = BM_WIDTH;
             uint16_t h = BM_HEIGHT;
-            int p = BM_PMAX;
-            int bstep = BM_BSTEP;
-            int bx = p;
-            int by = p;
-            int bw = w - 2 * p;
-            int bh = h - 2 * p;
+            int p = cams3_param_get_int("FLOW_PMAX");
+            if (p < 4) p = 4;
+            if (p > 12) p = 12; // Clamp to 12 for safe 4-block layout margins
+            int bstep = cams3_param_get_int("FLOW_BSTEP");
+            if (bstep < 1 || bstep > 8) bstep = BM_BSTEP;
 
-            int8_t dx = guess_dx;
-            int8_t dy = guess_dy;
-            bm_ARPS(w, s_prev_gray, s_curr_gray, bx, by, bw, bh, bstep, p, &dx, &dy);
-            guess_dx = dx;
-            guess_dy = dy;
+            // 4-block layout on 160x120:
+            // Left (20, 35, 40x50), Right (100, 35, 40x50) -> baseline ΔX = 80px
+            // Top (55, 14, 50x36), Bottom (55, 70, 50x36) -> baseline ΔY = 56px
+            int bw_lr = 40, bh_lr = 50;
+            int bw_tb = 50, bh_tb = 36;
 
-            uint8_t q = bm_calc_quality(w, s_curr_gray, bx, by, bw, bh, bstep);
+            int8_t dx_L = guess_dx, dy_L = guess_dy;
+            int8_t dx_R = guess_dx, dy_R = guess_dy;
+            int8_t dx_T = guess_dx, dy_T = guess_dy;
+            int8_t dx_B = guess_dx, dy_B = guess_dy;
+
+            bm_ARPS(w, s_prev_gray, s_curr_gray, 20, 35, bw_lr, bh_lr, bstep, p, &dx_L, &dy_L);
+            bm_ARPS(w, s_prev_gray, s_curr_gray, 100, 35, bw_lr, bh_lr, bstep, p, &dx_R, &dy_R);
+            bm_ARPS(w, s_prev_gray, s_curr_gray, 55, 14, bw_tb, bh_tb, bstep, p, &dx_T, &dy_T);
+            bm_ARPS(w, s_prev_gray, s_curr_gray, 55, 70, bw_tb, bh_tb, bstep, p, &dx_B, &dy_B);
+
+            // Translational motion (average of opposite blocks)
+            int8_t trans_dx = (int8_t)((dx_L + dx_R) / 2);
+            int8_t trans_dy = (int8_t)((dy_T + dy_B) / 2);
+            guess_dx = trans_dx;
+            guess_dy = trans_dy;
+
+            uint8_t q_L = bm_calc_quality(w, s_curr_gray, 20, 35, bw_lr, bh_lr, bstep);
+            uint8_t q_R = bm_calc_quality(w, s_curr_gray, 100, 35, bw_lr, bh_lr, bstep);
+            uint8_t q_T = bm_calc_quality(w, s_curr_gray, 55, 14, bw_tb, bh_tb, bstep);
+            uint8_t q_B = bm_calc_quality(w, s_curr_gray, 55, 70, bw_tb, bh_tb, bstep);
+            uint8_t q = (uint8_t)(((uint16_t)q_L + q_R + q_T + q_B) / 4);
+
+            // Flow Divergence (Expansion / Contraction due to vertical movement)
+            float div_x = (float)(dx_R - dx_L) / 80.0f;
+            float div_y = (float)(dy_B - dy_T) / 56.0f;
+            float div_avg = (div_x + div_y) / 2.0f;
+            s_last_divergence = div_avg;
+
+            // Frame delta time in seconds
+            int64_t dt_frame_us = now_us - s_last_frame_us;
+            if (dt_frame_us < 1000 || dt_frame_us > 200000) dt_frame_us = 33333; // Default ~30Hz
+            float dt_sec = (float)dt_frame_us / 1000000.0f;
+
+            // Fetch telemetry snapshot from FC
+            vehicle_telemetry_t telem;
+            portENTER_CRITICAL(&s_telem_lock);
+            telem = s_vehicle_telem;
+            portEXIT_CRITICAL(&s_telem_lock);
+
+            // Optical Flow Height / Distance Estimator
+            if (cams3_param_get_int("FLOW_Z_EST_EN") > 0) {
+                float z_meas = -1.0f;
+
+                // Method A: Vertical velocity (climb rate) & Divergence
+                // Active when descending (climb < -0.04m/s, expansion div_avg > 0)
+                // or ascending (climb > +0.04m/s, contraction div_avg < 0)
+                if (fabsf(telem.vz_climb) > 0.04f && fabsf(div_avg) > 0.005f) {
+                    float div_rate = div_avg / dt_sec; // [1/s]
+                    if ((telem.vz_climb < 0.0f && div_rate > 0.0f) ||
+                        (telem.vz_climb > 0.0f && div_rate < 0.0f)) {
+                        z_meas = fabsf(telem.vz_climb) / fabsf(div_rate);
+                    }
+                }
+
+                // Method B: Horizontal velocity & Angular Optical Flow Rate
+                if (z_meas < 0.0f) {
+                    float v_horiz = sqrtf(telem.vx * telem.vx + telem.vy * telem.vy);
+                    if (v_horiz > 0.08f) {
+                        float fx = 125.6f; // Focal length in pixels @ 160x120 (~65 deg FOV)
+                        float flow_rate_x = (float)trans_dx / (fx * dt_sec);
+                        float flow_rate_y = (float)trans_dy / (fx * dt_sec);
+                        float flow_speed = sqrtf(flow_rate_x * flow_rate_x + flow_rate_y * flow_rate_y);
+                        if (flow_speed > 0.10f) {
+                            z_meas = v_horiz / flow_speed;
+                        }
+                    }
+                }
+
+                // Fusion with Low-Pass Filter
+                if (z_meas >= 0.05f && z_meas <= 3.50f) {
+                    s_estimated_distance = 0.85f * s_estimated_distance + 0.15f * z_meas;
+                } else if (telem.has_telem) {
+                    // Method C: Relative barometric tracking during hover/stationary state
+                    if (!s_has_initial_baro) {
+                        s_last_baro_alt = telem.baro_alt;
+                        s_has_initial_baro = true;
+                    } else {
+                        float d_baro = telem.baro_alt - s_last_baro_alt;
+                        s_last_baro_alt = telem.baro_alt;
+                        s_estimated_distance += d_baro;
+                    }
+                }
+
+                // Safety clamp: 5cm to 3.5m
+                if (s_estimated_distance < 0.05f) s_estimated_distance = 0.05f;
+                if (s_estimated_distance > 3.50f) s_estimated_distance = 3.50f;
+            }
 
             // Atomically update shared accumulator for TX task
             portENTER_CRITICAL(&s_flow_lock);
-            s_accum_dx += dx;
-            s_accum_dy += dy;
+            s_accum_dx += trans_dx;
+            s_accum_dy += trans_dy;
             s_last_quality = q;
             s_last_frame_us = now_us;
             s_new_frames_count++;
@@ -302,7 +400,9 @@ static void optical_flow_tx_task(void *pvParameters)
             // Camera is actively feeding frames: report real flow (accumulated dpix * 10)
             send_dx = (int16_t)(acc_x * 10);
             send_dy = (int16_t)(acc_y * 10);
-            send_quality = (frames_arrived > 0) ? q : (q > 0 ? q : 0);
+            uint8_t effective_q = (frames_arrived > 0) ? q : (q > 0 ? q : 0);
+            uint8_t q_min = (uint8_t)cams3_param_get_int("FLOW_QUAL_MIN");
+            send_quality = (effective_q >= q_min) ? effective_q : 0;
         } else {
             // Camera initializing, stalled, or NG: send_quality = 0 (NG / Hold state)
             send_dx = 0;
@@ -315,8 +415,9 @@ static void optical_flow_tx_task(void *pvParameters)
         s_latest_metrics.dy = send_dy / 10;
         s_latest_metrics.quality = send_quality;
         s_latest_metrics.dt_us = 50000; // Exact 50ms interval
+        s_latest_metrics.distance_m = s_estimated_distance;
 
-        // ALWAYS TRANSMIT MAVLINK #100 (Unconditional fixed-rate stream)
+        // ALWAYS TRANSMIT MAVLINK #100 (Unconditional fixed-rate stream with estimated ground distance)
         uint16_t len = mavlink_pack_optical_flow_v2(
             mav_packet,
             (uint64_t)now_us,
@@ -326,7 +427,7 @@ static void optical_flow_tx_task(void *pvParameters)
             0.0f,                   // flow_comp_m_x
             0.0f,                   // flow_comp_m_y
             send_quality,           // quality: 0=NG, 1..255=Valid
-            -1.0f,                  // ground_distance (-1: unknown)
+            s_estimated_distance,   // ground_distance in meters! (positive float)
             0.0f,                   // flow_rate_x
             0.0f,                   // flow_rate_y
             &s_mavlink_seq
@@ -339,8 +440,9 @@ static void optical_flow_tx_task(void *pvParameters)
         if (now_us - last_stats_us >= 5000000) {
             float tx_rate = (float)packets_sent * 1000000.0f / (float)(now_us - last_stats_us);
             s_latest_metrics.fps = tx_rate;
-            ESP_LOGI(TAG, "[OPTICAL FLOW] TX Rate: %.2f Hz | dx=%d, dy=%d | Quality=%u/255 %s",
+            ESP_LOGI(TAG, "[OPTICAL FLOW] TX: %.1fHz | dx=%d, dy=%d | Q=%u | Z_est=%.2fm (div=%.4f, Vz=%.2f) %s",
                      tx_rate, send_dx, send_dy, send_quality,
+                     s_estimated_distance, s_last_divergence, s_vehicle_telem.vz_climb,
                      (send_quality == 0) ? "(NG/HOLD)" : "(OK)");
             packets_sent = 0;
             last_stats_us = now_us;
@@ -403,7 +505,7 @@ esp_err_t optical_flow_init(void)
 
         .pixel_format = PIXFORMAT_JPEG,        // PY260 native JPEG format
         .frame_size   = FRAMESIZE_VGA,         // 640x480 native
-        .jpeg_quality = 14,
+        .jpeg_quality = (int)cams3_param_get("CAM_JPEG_Q") > 0 ? (int)cams3_param_get("CAM_JPEG_Q") : 14,
         .fb_count     = 2,                     // Double buffer in PSRAM
         .fb_location  = CAMERA_FB_IN_PSRAM,
         .grab_mode    = CAMERA_GRAB_LATEST,
@@ -418,9 +520,10 @@ esp_err_t optical_flow_init(void)
 
     sensor_t *s = esp_camera_sensor_get();
     if (s != NULL) {
-        s->set_vflip(s, 1);
-        s->set_hmirror(s, 0);
-        ESP_LOGI(TAG, "PY260 Camera successfully initialized! (PID: 0x%04x)", s->id.PID);
+        s->set_vflip(s, cams3_param_get_int("CAM_VFLIP"));
+        s->set_hmirror(s, cams3_param_get_int("CAM_HMIRROR"));
+        ESP_LOGI(TAG, "PY260 Camera successfully initialized! (PID: 0x%04x, VFLIP=%d, HMIRROR=%d)",
+                 s->id.PID, cams3_param_get_int("CAM_VFLIP"), cams3_param_get_int("CAM_HMIRROR"));
     }
 
     s_camera_ready = true;
@@ -465,6 +568,87 @@ void optical_flow_get_latest(optical_flow_metrics_t *metrics)
 {
     if (metrics != NULL) {
         *metrics = s_latest_metrics;
+    }
+}
+
+float optical_flow_get_estimated_distance(void)
+{
+    return s_estimated_distance;
+}
+
+void optical_flow_feed_mavlink(const uint8_t *buf, uint16_t len)
+{
+    if (!buf || len < 8) return;
+
+    uint16_t offset = 0;
+    while (offset < len) {
+        // MAVLink v2 packet
+        if (buf[offset] == 0xFD && (offset + 10) <= len) {
+            uint8_t payload_len = buf[offset + 1];
+            uint8_t incompat_flags = buf[offset + 2];
+            uint32_t msgid = buf[offset + 7] |
+                            ((uint32_t)buf[offset + 8] << 8) |
+                            ((uint32_t)buf[offset + 9] << 16);
+            uint16_t total_len = 10 + payload_len + 2 + (incompat_flags & 0x01 ? 13 : 0);
+            if (offset + total_len > len) break;
+
+            const uint8_t *payload = &buf[offset + 10];
+
+            // 1. VFR_HUD (#74): alt at offset 8, climb (m/s) at offset 12
+            if (msgid == 74 && payload_len >= 16) {
+                float alt, climb;
+                memcpy(&alt, &payload[8], sizeof(float));
+                memcpy(&climb, &payload[12], sizeof(float));
+                portENTER_CRITICAL(&s_telem_lock);
+                s_vehicle_telem.baro_alt = alt;
+                s_vehicle_telem.vz_climb = climb; // positive = climb, negative = descend
+                s_vehicle_telem.last_update_us = esp_timer_get_time();
+                s_vehicle_telem.has_telem = true;
+                portEXIT_CRITICAL(&s_telem_lock);
+            }
+            // 2. GLOBAL_POSITION_INT (#33): relative_alt (mm) @ 16, vx,vy,vz (cm/s) @ 20,22,24
+            else if (msgid == 33 && payload_len >= 26) {
+                int32_t rel_alt_mm;
+                int16_t vx_cm, vy_cm, vz_cm;
+                memcpy(&rel_alt_mm, &payload[16], sizeof(int32_t));
+                memcpy(&vx_cm, &payload[20], sizeof(int16_t));
+                memcpy(&vy_cm, &payload[22], sizeof(int16_t));
+                memcpy(&vz_cm, &payload[24], sizeof(int16_t));
+                portENTER_CRITICAL(&s_telem_lock);
+                s_vehicle_telem.baro_alt = (float)rel_alt_mm / 1000.0f;
+                s_vehicle_telem.vx = (float)vx_cm / 100.0f;
+                s_vehicle_telem.vy = (float)vy_cm / 100.0f;
+                s_vehicle_telem.vz_climb = -(float)vz_cm / 100.0f; // NED vz is positive down
+                s_vehicle_telem.last_update_us = esp_timer_get_time();
+                s_vehicle_telem.has_telem = true;
+                portEXIT_CRITICAL(&s_telem_lock);
+            }
+            offset += total_len;
+        }
+        // MAVLink v1 packet
+        else if (buf[offset] == 0xFE && (offset + 6) <= len) {
+            uint8_t payload_len = buf[offset + 1];
+            uint8_t msgid = buf[offset + 5];
+            uint16_t total_len = 6 + payload_len + 2;
+            if (offset + total_len > len) break;
+
+            const uint8_t *payload = &buf[offset + 6];
+            if (msgid == 74 && payload_len >= 16) { // VFR_HUD
+                float alt, climb;
+                memcpy(&alt, &payload[8], sizeof(float));
+                memcpy(&climb, &payload[12], sizeof(float));
+                portENTER_CRITICAL(&s_telem_lock);
+                s_vehicle_telem.baro_alt = alt;
+                s_vehicle_telem.vz_climb = climb;
+                s_vehicle_telem.last_update_us = esp_timer_get_time();
+                s_vehicle_telem.has_telem = true;
+                portEXIT_CRITICAL(&s_telem_lock);
+            }
+            offset += total_len;
+        }
+        else {
+            offset++;
+        }
     }
 }
 

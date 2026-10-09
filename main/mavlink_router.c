@@ -13,6 +13,8 @@
 #include "lwip/sockets.h"
 #include "board_pins.h"
 #include "mavlink_heartbeat_pack.h"
+#include "cams3_params.h"
+#include "optical_flow.h"
 
 static const char *TAG = "mav_router";
 
@@ -118,6 +120,12 @@ static void uart_rx_task(void *pvParameters)
         if (len > 0) {
             s_bytes_from_fc += len;
 
+            // Inspect incoming FC MAVLink packets for parameter requests or commands
+            cams3_params_handle_mavlink_packet(rx_buf, len);
+
+            // Feed FC telemetry (climb rate, speed, alt) for optical flow height estimation
+            optical_flow_feed_mavlink(rx_buf, len);
+
             // Forward telemetry chunks to GCS/Phone via Wi-Fi Tx Queue
             int offset = 0;
             while (offset < len) {
@@ -183,6 +191,9 @@ static void udp_rx_task(void *pvParameters)
             }
 
             s_bytes_from_wifi += len;
+
+            // Inspect incoming GCS (Mission Planner) MAVLink packets for parameter requests or sets
+            cams3_params_handle_mavlink_packet(rx_buf, len);
 
             // Learn client IP address, but keep destination port fixed to 14550!
             if (!s_has_client_addr ||
@@ -294,6 +305,9 @@ esp_err_t mavlink_router_init(void)
 
     uart_init_internal();
     udp_init_internal();
+
+    // Initialize CamS3 Parameter Subsystem (NVS Storage & Param Microservice)
+    cams3_params_init();
 
     // Pin all routing tasks to Core 1 (leaving Core 0 100% dedicated to Camera and Vision Pipelines)
     xTaskCreatePinnedToCore(uart_rx_task,   "uart_rx_task",   3072, NULL, 10, NULL, 1);

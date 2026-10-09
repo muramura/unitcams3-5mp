@@ -13,6 +13,7 @@
 #include "mavlink_landing_target_pack.h"
 #include "mavlink_heartbeat_pack.h"
 #include "mavlink_router.h"
+#include "cams3_params.h"
 
 static const char *TAG = "vision_pipeline";
 
@@ -102,24 +103,26 @@ static void vision_dispatcher_task(void *pvParameters)
         // -------------------------------------------------------------
         // Pipeline 2: Landing Target / ArUco Detection (Decimated @ ~6 FPS)
         // -------------------------------------------------------------
-        marker_target_t target;
-        decimation_counter++;
-        if (decimation_counter >= 5) {
-            decimation_counter = 0;
-            if (marker_detector_process(w, h, fb_curr->buf, &target)) {
-                // Send MAVLink #149 LANDING_TARGET via Dual-Queue Router
-                uint16_t lt_len = mavlink_pack_landing_target_v2(
-                    mav_packet,
-                    (uint64_t)now_us,
-                    target.id,
-                    target.angle_x,
-                    target.angle_y,
-                    target.distance,
-                    (target.width / (float)w),
-                    (target.height / (float)h),
-                    &s_mav_seq
-                );
-                mavlink_router_send_internal(mav_packet, lt_len, MAV_ROUTE_DEST_ALL);
+        marker_target_t target = {0};
+        if (cams3_param_get_int("LAND_TGT_EN") > 0) {
+            decimation_counter++;
+            if (decimation_counter >= 5) {
+                decimation_counter = 0;
+                if (marker_detector_process(w, h, fb_curr->buf, &target)) {
+                    // Send MAVLink #149 LANDING_TARGET via Dual-Queue Router
+                    uint16_t lt_len = mavlink_pack_landing_target_v2(
+                        mav_packet,
+                        (uint64_t)now_us,
+                        target.id,
+                        target.angle_x,
+                        target.angle_y,
+                        target.distance,
+                        (target.width / (float)w),
+                        (target.height / (float)h),
+                        &s_mav_seq
+                    );
+                    mavlink_router_send_internal(mav_packet, lt_len, MAV_ROUTE_DEST_ALL);
+                }
             }
         }
 
@@ -144,22 +147,25 @@ static void vision_dispatcher_task(void *pvParameters)
             if (s_overlay_buf) {
                 memcpy(s_overlay_buf, fb_curr->buf, w * h);
 
-                // Draw center crosshair
-                int cx = w / 2;
-                int cy = h / 2;
-                draw_line(s_overlay_buf, w, h, cx - 4, cy, cx + 4, cy, 255);
-                draw_line(s_overlay_buf, w, h, cx, cy - 4, cx, cy + 4, 255);
+                // Draw OSD overlays if enabled
+                if (cams3_param_get_int("OSD_ENABLE") > 0) {
+                    // Draw center crosshair
+                    int cx = w / 2;
+                    int cy = h / 2;
+                    draw_line(s_overlay_buf, w, h, cx - 4, cy, cx + 4, cy, 255);
+                    draw_line(s_overlay_buf, w, h, cx, cy - 4, cx, cy + 4, 255);
 
-                // Draw Optical Flow motion vector arrow
-                int fx = cx + flow_metrics.dx * 3;
-                int fy = cy + flow_metrics.dy * 3;
-                draw_line(s_overlay_buf, w, h, cx, cy, fx, fy, 255);
+                    // Draw Optical Flow motion vector arrow
+                    int fx = cx + flow_metrics.dx * 3;
+                    int fy = cy + flow_metrics.dy * 3;
+                    draw_line(s_overlay_buf, w, h, cx, cy, fx, fy, 255);
 
-                // Draw Landing Target bounding box if detected
-                if (target.detected) {
-                    draw_rect(s_overlay_buf, w, h,
-                              target.corners_x[0], target.corners_y[0],
-                              target.corners_x[2], target.corners_y[2], 255);
+                    // Draw Landing Target bounding box if detected
+                    if (target.detected) {
+                        draw_rect(s_overlay_buf, w, h,
+                                  target.corners_x[0], target.corners_y[0],
+                                  target.corners_x[2], target.corners_y[2], 255);
+                    }
                 }
             }
             xSemaphoreGive(s_mutex);
