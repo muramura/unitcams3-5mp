@@ -623,7 +623,6 @@ static void optical_flow_dummy_task(void *pvParameters)
     ESP_LOGI(TAG, "  Target: StampFly FC (UART 2Mbps) + GCS (UDP 14550)");
     ESP_LOGI(TAG, "==========================================================");
 
-    uint8_t seq = 0;
     uint8_t flow_packet[64];
     uint8_t target_packet[80];
     uint32_t count = 0;
