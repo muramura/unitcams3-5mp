@@ -164,13 +164,53 @@ static void uart_tx_task(void *pvParameters)
     }
 }
 
+typedef enum {
+    ROUTE_ACTION_PROCESS_LOCAL_ONLY = 1,   // CamS3 targeted: Do NOT forward to FC!
+    ROUTE_ACTION_PROCESS_LOCAL_AND_FC = 2, // Broadcast / All: Process & forward
+    ROUTE_ACTION_FORWARD_FC_ONLY = 3,      // Other comp (FC) targeted: Forward only
+} route_decision_t;
+
+static route_decision_t decide_rx_route(const mavlink_message_t *msg)
+{
+    const mavlink_msg_entry_t *entry = mavlink_get_msg_entry(msg->msgid);
+    if (!entry) {
+        // Unknown or custom message: forward to FC for safety
+        return ROUTE_ACTION_FORWARD_FC_ONLY;
+    }
+
+    uint8_t target_comp = 0;
+    bool has_target_comp = false;
+
+    if (entry->flags & MAV_MSG_ENTRY_FLAG_HAVE_TARGET_COMPONENT) {
+        has_target_comp = true;
+        if (entry->target_component_ofs < msg->len) {
+            target_comp = _MAV_PAYLOAD(msg)[entry->target_component_ofs];
+        } else {
+            target_comp = 0; // zero-trimmed in MAVLink 2
+        }
+    }
+
+    if (!has_target_comp || target_comp == 0) {
+        // Broadcast (comp 0) or message without target component (e.g. HEARTBEAT)
+        return ROUTE_ACTION_PROCESS_LOCAL_AND_FC;
+    } else if (target_comp == MAV_COMP_ID_OPTICAL_FLOW) {
+        // Specifically targeted at CamS3 (Comp 197): Process locally, NEVER forward to FC!
+        return ROUTE_ACTION_PROCESS_LOCAL_ONLY;
+    } else {
+        // Targeted at another component (e.g. Comp 1 FC)
+        return ROUTE_ACTION_FORWARD_FC_ONLY;
+    }
+}
+
 // ----------------------------------------------------------------------
-// Task 3: UDP RX Task (Reads commands/requests from GCS/Phone -> FC Tx Queue)
+// Task 3: UDP RX Task (Smart MAVLink Ingress & Router from GCS/Phone)
 // ----------------------------------------------------------------------
 static void udp_rx_task(void *pvParameters)
 {
     uint8_t rx_buf[MAVLINK_ROUTER_BUF_SIZE];
     struct sockaddr_in from_addr;
+    mavlink_message_t msg;
+    mavlink_status_t status;
 
     while (1) {
         if (s_udp_sock < 0) {
@@ -201,26 +241,30 @@ static void udp_rx_task(void *pvParameters)
                          from_ip, from_ip, MAVLINK_ROUTER_UDP_PORT);
             }
 
-            // Inspect incoming GCS (Mission Planner) MAVLink packets for parameter requests or sets
-            cams3_params_handle_mavlink_packet_chan(rx_buf, len, MAVLINK_COMM_1);
+            // Parse incoming bytes into MAVLink frames and route intelligently
+            for (int i = 0; i < len; i++) {
+                if (mavlink_parse_char(MAVLINK_COMM_1, rx_buf[i], &msg, &status)) {
+                    route_decision_t dec = decide_rx_route(&msg);
 
-            // Forward commands to StampFly FC via FC Tx Queue
-            int offset = 0;
-            while (offset < len) {
-                int chunk = len - offset;
-                if (chunk > MAVLINK_MAX_PACKET_LEN) {
-                    chunk = MAVLINK_MAX_PACKET_LEN;
-                }
-                mavlink_queue_item_t item;
-                item.len = chunk;
-                memcpy(item.data, &rx_buf[offset], chunk);
+                    // 1. Process locally on CamS3 if targeted or broadcast
+                    if (dec == ROUTE_ACTION_PROCESS_LOCAL_ONLY ||
+                        dec == ROUTE_ACTION_PROCESS_LOCAL_AND_FC) {
+                        cams3_params_handle_mavlink_msg(&msg);
+                    }
 
-                if (s_fc_tx_queue) {
-                    if (xQueueSend(s_fc_tx_queue, &item, 0) != pdTRUE) {
-                        s_fc_tx_drops++;
+                    // 2. Forward to StampFly FC (UART) ONLY if NOT local-only!
+                    //    Messages specifically targeted at CamS3 (Comp 197) are NEVER forwarded to FC!
+                    if (dec == ROUTE_ACTION_FORWARD_FC_ONLY ||
+                        dec == ROUTE_ACTION_PROCESS_LOCAL_AND_FC) {
+                        mavlink_queue_item_t item;
+                        item.len = mavlink_msg_to_send_buffer(item.data, &msg);
+                        if (s_fc_tx_queue) {
+                            if (xQueueSend(s_fc_tx_queue, &item, 0) != pdTRUE) {
+                                s_fc_tx_drops++;
+                            }
+                        }
                     }
                 }
-                offset += chunk;
             }
         }
     }
@@ -326,7 +370,7 @@ esp_err_t mavlink_router_init(void)
     xTaskCreatePinnedToCore(uart_rx_task,   "uart_rx_task",   4096, NULL, 10, NULL, 1);
     xTaskCreatePinnedToCore(uart_tx_task,   "uart_tx_task",   4096, NULL,  9, NULL, 1);
     xTaskCreatePinnedToCore(udp_rx_task,    "udp_rx_task",    4096, NULL,  9, NULL, 1);
-    xTaskCreatePinnedToCore(wifi_tx_task,   "wifi_tx_task",   4096, NULL,  8, NULL, 1);
+    xTaskCreatePinnedToCore(wifi_tx_task,   "wifi_tx_task",   4096, NULL, 11, NULL, 1);
     xTaskCreatePinnedToCore(heartbeat_task, "heartbeat_task", 4096, NULL,  5, NULL, 1);
     xTaskCreatePinnedToCore(stats_task,     "router_stats",   2048, NULL,  1, NULL, 1);
 
