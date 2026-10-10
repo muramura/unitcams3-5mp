@@ -463,10 +463,10 @@ esp_err_t mavlink_router_send_internal(const uint8_t *packet, uint16_t length, m
         }
     }
 
-    // 2. Dispatch to GCS Queue (Wi-Fi UDP) - Allow brief pacing delay for internal telemetry/params
+    // 2. Dispatch to GCS Queue (Wi-Fi UDP) - Non-blocking (0 timeout) to prevent blocking caller
     if (dest & MAV_ROUTE_DEST_GCS) {
         if (s_wifi_tx_queue) {
-            if (xQueueSend(s_wifi_tx_queue, &item, pdMS_TO_TICKS(15)) != pdTRUE) {
+            if (xQueueSend(s_wifi_tx_queue, &item, 0) != pdTRUE) {
                 s_wifi_tx_drops++;
             }
         }
