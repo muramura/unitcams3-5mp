@@ -191,8 +191,10 @@ static void udp_rx_task(void *pvParameters)
 
             s_bytes_from_wifi += len;
 
-            // Learn client IP address first, but keep destination port fixed to 14550!
-            // Crucial: Must be known before sending any CamS3 parameter responses!
+            // Inspect incoming GCS (Mission Planner) MAVLink packets for parameter requests or sets
+            cams3_params_handle_mavlink_packet_chan(rx_buf, len, MAVLINK_COMM_1);
+
+            // Learn client IP address, but keep destination port fixed to 14550!
             if (!s_has_client_addr ||
                 s_client_addr.sin_addr.s_addr != from_addr.sin_addr.s_addr) {
                 s_client_addr.sin_addr = from_addr.sin_addr;
@@ -200,13 +202,6 @@ static void udp_rx_task(void *pvParameters)
                 s_has_client_addr = true;
                 ESP_LOGI(TAG, "Discovered active GCS at %s - sending telemetry to %s:%d",
                          from_ip, from_ip, MAVLINK_ROUTER_UDP_PORT);
-            }
-
-            // Inspect incoming GCS (Mission Planner) MAVLink packets for parameter requests or sets
-            cams3_route_action_t action = cams3_params_process_gcs_packet(rx_buf, len);
-            if (action == CAMS3_ROUTE_HANDLED) {
-                // Handled internally by CamS3 (in comp=0 case, forwarded to FC after CamS3 params finished)
-                continue;
             }
 
             // Forward commands to StampFly FC via FC Tx Queue
