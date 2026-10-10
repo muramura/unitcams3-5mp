@@ -86,6 +86,30 @@ esp_err_t cams3_params_save_all(void);
  * @param buf Raw MAVLink packet buffer
  * @param len Buffer length in bytes
  */
+/**
+ * @brief Routing actions for incoming GCS packets
+ */
+typedef enum {
+    CAMS3_ROUTE_FORWARD_IMMEDIATE = 0, // Forward directly to FC immediately
+    CAMS3_ROUTE_HANDLED,               // Handled internally (do not forward to FC)
+} cams3_route_action_t;
+
+/**
+ * @brief Inspect incoming GCS packet and determine routing action.
+ * If PARAM_REQUEST_LIST with target_component == 0 is received:
+ *   1. Sends CamS3 parameters to GCS via Wi-Fi queue
+ *   2. Waits for Wi-Fi queue transmission
+ *   3. Forwards request to StampFly FC via UART queue
+ *   4. Returns CAMS3_ROUTE_HANDLED (preventing duplicate forwarding)
+ *
+ * If target_component == MAV_COMP_ID_OPTICAL_FLOW:
+ *   Responds to request and returns CAMS3_ROUTE_HANDLED.
+ *
+ * Otherwise:
+ *   Returns CAMS3_ROUTE_FORWARD_IMMEDIATE.
+ */
+cams3_route_action_t cams3_params_process_gcs_packet(const uint8_t *buf, uint16_t len);
+
 void cams3_params_handle_mavlink_packet(const uint8_t *buf, uint16_t len);
 void cams3_params_handle_mavlink_packet_chan(const uint8_t *buf, uint16_t len, uint8_t chan);
 
