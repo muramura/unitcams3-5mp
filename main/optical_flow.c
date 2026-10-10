@@ -10,8 +10,7 @@
 #include "freertos/task.h"
 #include "board_pins.h"
 #include "mavlink_router.h"
-#include "mavlink_optical_flow_pack.h"
-#include "mavlink_landing_target_pack.h"
+#include <mavlink/v2.0/common/mavlink.h>
 #include "jpeg_decoder.h"
 #include "cams3_params.h"
 
@@ -27,7 +26,6 @@ static const char *TAG = "optical_flow";
 
 // Global state & metrics
 static optical_flow_metrics_t s_latest_metrics = {0};
-static uint8_t s_mavlink_seq = 0;
 static bool s_running = false;
 static bool s_camera_ready = false;
 
@@ -417,8 +415,11 @@ static void optical_flow_tx_task(void *pvParameters)
         s_latest_metrics.distance_m = s_estimated_distance;
 
         // ALWAYS TRANSMIT MAVLINK #100 (Unconditional fixed-rate stream with estimated ground distance)
-        uint16_t len = mavlink_pack_optical_flow_v2(
-            mav_packet,
+        mavlink_message_t flow_msg;
+        mavlink_msg_optical_flow_pack(
+            1,                      // system_id (FC)
+            MAV_COMP_ID_OPTICAL_FLOW, // component_id (197)
+            &flow_msg,
             (uint64_t)now_us,
             0,                      // sensor_id
             send_dx,                // flow_x (dpix * 10)
@@ -426,11 +427,11 @@ static void optical_flow_tx_task(void *pvParameters)
             0.0f,                   // flow_comp_m_x
             0.0f,                   // flow_comp_m_y
             send_quality,           // quality: 0=NG, 1..255=Valid
-            s_estimated_distance,   // ground_distance in meters! (positive float)
+            s_estimated_distance,   // ground_distance in meters
             0.0f,                   // flow_rate_x
-            0.0f,                   // flow_rate_y
-            &s_mavlink_seq
+            0.0f                    // flow_rate_y
         );
+        uint16_t len = mavlink_msg_to_send_buffer(mav_packet, &flow_msg);
 
         mavlink_router_send_internal(mav_packet, len, MAV_ROUTE_DEST_ALL);
         packets_sent++;
@@ -577,76 +578,34 @@ float optical_flow_get_estimated_distance(void)
 
 void optical_flow_feed_mavlink(const uint8_t *buf, uint16_t len)
 {
-    if (!buf || len < 8) return;
+    if (!buf || len == 0) return;
 
-    uint16_t offset = 0;
-    while (offset < len) {
-        // MAVLink v2 packet
-        if (buf[offset] == 0xFD && (offset + 10) <= len) {
-            uint8_t payload_len = buf[offset + 1];
-            uint8_t incompat_flags = buf[offset + 2];
-            uint32_t msgid = buf[offset + 7] |
-                            ((uint32_t)buf[offset + 8] << 8) |
-                            ((uint32_t)buf[offset + 9] << 16);
-            uint16_t total_len = 10 + payload_len + 2 + (incompat_flags & 0x01 ? 13 : 0);
-            if (offset + total_len > len) break;
+    mavlink_message_t msg;
+    mavlink_status_t status;
 
-            const uint8_t *payload = &buf[offset + 10];
-
-            // 1. VFR_HUD (#74): alt at offset 8, climb (m/s) at offset 12
-            if (msgid == 74 && payload_len >= 16) {
-                float alt, climb;
-                memcpy(&alt, &payload[8], sizeof(float));
-                memcpy(&climb, &payload[12], sizeof(float));
+    for (uint16_t i = 0; i < len; i++) {
+        if (mavlink_parse_char(MAVLINK_COMM_2, buf[i], &msg, &status)) {
+            if (msg.msgid == MAVLINK_MSG_ID_VFR_HUD) {
+                mavlink_vfr_hud_t hud;
+                mavlink_msg_vfr_hud_decode(&msg, &hud);
                 portENTER_CRITICAL(&s_telem_lock);
-                s_vehicle_telem.baro_alt = alt;
-                s_vehicle_telem.vz_climb = climb; // positive = climb, negative = descend
+                s_vehicle_telem.baro_alt = hud.alt;
+                s_vehicle_telem.vz_climb = hud.climb;
+                s_vehicle_telem.last_update_us = esp_timer_get_time();
+                s_vehicle_telem.has_telem = true;
+                portEXIT_CRITICAL(&s_telem_lock);
+            } else if (msg.msgid == MAVLINK_MSG_ID_GLOBAL_POSITION_INT) {
+                mavlink_global_position_int_t pos;
+                mavlink_msg_global_position_int_decode(&msg, &pos);
+                portENTER_CRITICAL(&s_telem_lock);
+                s_vehicle_telem.baro_alt = (float)pos.relative_alt / 1000.0f;
+                s_vehicle_telem.vx = (float)pos.vx / 100.0f;
+                s_vehicle_telem.vy = (float)pos.vy / 100.0f;
+                s_vehicle_telem.vz_climb = -(float)pos.vz / 100.0f;
                 s_vehicle_telem.last_update_us = esp_timer_get_time();
                 s_vehicle_telem.has_telem = true;
                 portEXIT_CRITICAL(&s_telem_lock);
             }
-            // 2. GLOBAL_POSITION_INT (#33): relative_alt (mm) @ 16, vx,vy,vz (cm/s) @ 20,22,24
-            else if (msgid == 33 && payload_len >= 26) {
-                int32_t rel_alt_mm;
-                int16_t vx_cm, vy_cm, vz_cm;
-                memcpy(&rel_alt_mm, &payload[16], sizeof(int32_t));
-                memcpy(&vx_cm, &payload[20], sizeof(int16_t));
-                memcpy(&vy_cm, &payload[22], sizeof(int16_t));
-                memcpy(&vz_cm, &payload[24], sizeof(int16_t));
-                portENTER_CRITICAL(&s_telem_lock);
-                s_vehicle_telem.baro_alt = (float)rel_alt_mm / 1000.0f;
-                s_vehicle_telem.vx = (float)vx_cm / 100.0f;
-                s_vehicle_telem.vy = (float)vy_cm / 100.0f;
-                s_vehicle_telem.vz_climb = -(float)vz_cm / 100.0f; // NED vz is positive down
-                s_vehicle_telem.last_update_us = esp_timer_get_time();
-                s_vehicle_telem.has_telem = true;
-                portEXIT_CRITICAL(&s_telem_lock);
-            }
-            offset += total_len;
-        }
-        // MAVLink v1 packet
-        else if (buf[offset] == 0xFE && (offset + 6) <= len) {
-            uint8_t payload_len = buf[offset + 1];
-            uint8_t msgid = buf[offset + 5];
-            uint16_t total_len = 6 + payload_len + 2;
-            if (offset + total_len > len) break;
-
-            const uint8_t *payload = &buf[offset + 6];
-            if (msgid == 74 && payload_len >= 16) { // VFR_HUD
-                float alt, climb;
-                memcpy(&alt, &payload[8], sizeof(float));
-                memcpy(&climb, &payload[12], sizeof(float));
-                portENTER_CRITICAL(&s_telem_lock);
-                s_vehicle_telem.baro_alt = alt;
-                s_vehicle_telem.vz_climb = climb;
-                s_vehicle_telem.last_update_us = esp_timer_get_time();
-                s_vehicle_telem.has_telem = true;
-                portEXIT_CRITICAL(&s_telem_lock);
-            }
-            offset += total_len;
-        }
-        else {
-            offset++;
         }
     }
 }
@@ -688,8 +647,10 @@ static void optical_flow_dummy_task(void *pvParameters)
         uint64_t now_us = (uint64_t)esp_timer_get_time();
 
         // 1. Send OPTICAL_FLOW (#100) @ 10Hz
-        uint16_t flow_len = mavlink_pack_optical_flow_v2(
-            flow_packet,
+        mavlink_message_t d_flow_msg;
+        mavlink_msg_optical_flow_pack(
+            1, MAV_COMP_ID_OPTICAL_FLOW,
+            &d_flow_msg,
             now_us,
             0,
             dummy_flow_x,
@@ -699,24 +660,31 @@ static void optical_flow_dummy_task(void *pvParameters)
             dummy_quality,
             dummy_flow_dist,
             0.0f,
-            0.0f,
-            &seq
+            0.0f
         );
+        uint16_t flow_len = mavlink_msg_to_send_buffer(flow_packet, &d_flow_msg);
         mavlink_router_send_internal(flow_packet, flow_len, MAV_ROUTE_DEST_ALL);
 
         // 2. Send LANDING_TARGET (#149) @ 5Hz
         if (count % 2 == 0) {
-            uint16_t target_len = mavlink_pack_landing_target_v2(
-                target_packet,
+            mavlink_message_t d_tgt_msg;
+            mavlink_msg_landing_target_pack(
+                1, MAV_COMP_ID_OPTICAL_FLOW,
+                &d_tgt_msg,
                 now_us,
                 dummy_target_id,
+                MAV_FRAME_BODY_NED,
                 dummy_angle_x,
                 dummy_angle_y,
                 dummy_target_dist,
                 dummy_size_x,
                 dummy_size_y,
-                &seq
+                0, 0, 0,
+                NULL,
+                LANDING_TARGET_TYPE_VISION_OTHER,
+                1
             );
+            uint16_t target_len = mavlink_msg_to_send_buffer(target_packet, &d_tgt_msg);
             mavlink_router_send_internal(target_packet, target_len, MAV_ROUTE_DEST_ALL);
         }
 

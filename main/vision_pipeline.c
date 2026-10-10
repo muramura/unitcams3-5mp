@@ -9,16 +9,13 @@
 #include "esp_log.h"
 #include "driver/uart.h"
 #include "board_pins.h"
-#include "mavlink_optical_flow_pack.h"
-#include "mavlink_landing_target_pack.h"
-#include "mavlink_heartbeat_pack.h"
+#include <mavlink/v2.0/common/mavlink.h>
 #include "mavlink_router.h"
 #include "cams3_params.h"
 
 static const char *TAG = "vision_pipeline";
 
 static vision_pipeline_status_t s_status = {0};
-static uint8_t s_mav_seq = 0;
 static bool s_running = false;
 static SemaphoreHandle_t s_mutex = NULL;
 
@@ -110,17 +107,24 @@ static void vision_dispatcher_task(void *pvParameters)
                 decimation_counter = 0;
                 if (marker_detector_process(w, h, fb_curr->buf, &target)) {
                     // Send MAVLink #149 LANDING_TARGET via Dual-Queue Router
-                    uint16_t lt_len = mavlink_pack_landing_target_v2(
-                        mav_packet,
+                    mavlink_message_t lt_msg;
+                    mavlink_msg_landing_target_pack(
+                        1, MAV_COMP_ID_OPTICAL_FLOW,
+                        &lt_msg,
                         (uint64_t)now_us,
                         target.id,
+                        MAV_FRAME_BODY_NED,
                         target.angle_x,
                         target.angle_y,
                         target.distance,
                         (target.width / (float)w),
                         (target.height / (float)h),
-                        &s_mav_seq
+                        0, 0, 0,
+                        NULL,
+                        LANDING_TARGET_TYPE_VISION_OTHER,
+                        1
                     );
+                    uint16_t lt_len = mavlink_msg_to_send_buffer(mav_packet, &lt_msg);
                     mavlink_router_send_internal(mav_packet, lt_len, MAV_ROUTE_DEST_ALL);
                 }
             }
@@ -130,8 +134,16 @@ static void vision_dispatcher_task(void *pvParameters)
         static int64_t last_hb_us = 0;
         if (now_us - last_hb_us >= 1000000) {
             last_hb_us = now_us;
-            uint8_t hb_packet[32];
-            uint16_t hb_len = mavlink_pack_heartbeat_v2(hb_packet, &s_mav_seq);
+            mavlink_message_t hb_msg;
+            uint8_t hb_packet[MAVLINK_MAX_PACKET_LEN];
+            mavlink_msg_heartbeat_pack(
+                1, MAV_COMP_ID_OPTICAL_FLOW,
+                &hb_msg,
+                MAV_TYPE_ONBOARD_CONTROLLER,
+                MAV_AUTOPILOT_INVALID,
+                0, 0, MAV_STATE_ACTIVE
+            );
+            uint16_t hb_len = mavlink_msg_to_send_buffer(hb_packet, &hb_msg);
             mavlink_router_send_internal(hb_packet, hb_len, MAV_ROUTE_DEST_ALL);
         }
 

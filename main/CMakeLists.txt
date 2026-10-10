@@ -22,4 +22,5 @@ idf_component_register(
         esp_timer
         soc
         esp_hw_support
+        mavlink
 )

@@ -8,7 +8,7 @@
 #include "nvs.h"
 #include "esp_log.h"
 #include "esp_camera.h"
-#include "mavlink_param_pack.h"
+#include <mavlink/v2.0/common/mavlink.h>
 #include "mavlink_router.h"
 
 static const char *TAG = "cams3_params";
@@ -36,7 +36,6 @@ static cams3_param_entry_t s_params[] = {
 #define PARAM_COUNT (sizeof(s_params) / sizeof(s_params[0]))
 
 static SemaphoreHandle_t s_param_mutex = NULL;
-static uint8_t s_param_mav_seq = 0;
 static cams3_param_change_cb_t s_change_cb = NULL;
 
 static void apply_hardware_setting(const char *name, float value)
@@ -218,10 +217,12 @@ static void send_param_value_index(uint16_t index)
 {
     if (index >= PARAM_COUNT) return;
 
-    uint8_t packet[48];
-    uint16_t len = mavlink_pack_param_value_v2(
-        packet,
-        &s_param_mav_seq,
+    mavlink_message_t msg;
+    uint8_t packet[MAVLINK_MAX_PACKET_LEN];
+    mavlink_msg_param_value_pack(
+        1,                         // system_id (FC)
+        MAV_COMP_ID_OPTICAL_FLOW,  // component_id (197)
+        &msg,
         s_params[index].name,
         s_params[index].value,
         s_params[index].type,
@@ -229,6 +230,7 @@ static void send_param_value_index(uint16_t index)
         index
     );
 
+    uint16_t len = mavlink_msg_to_send_buffer(packet, &msg);
     mavlink_router_send_internal(packet, len, MAV_ROUTE_DEST_GCS);
 }
 
@@ -242,123 +244,107 @@ static void send_all_params_list(void)
     }
 }
 
-void cams3_params_handle_mavlink_packet(const uint8_t *buf, uint16_t len)
+void cams3_params_handle_mavlink_packet_chan(const uint8_t *buf, uint16_t len, uint8_t chan)
 {
-    if (!buf || len < 10) return;
+    if (!buf || len == 0) return;
 
-    // Scan buffer for MAVLink v2 or v1 packet header
-    uint16_t offset = 0;
-    while (offset < len) {
-        if (buf[offset] == MAVLINK_V2_MAGIC && (offset + 10) <= len) {
-            uint8_t payload_len = buf[offset + 1];
-            uint8_t incompat_flags = buf[offset + 2];
-            uint8_t sysid = buf[offset + 5];
-            uint8_t compid = buf[offset + 6];
-            uint32_t msgid = buf[offset + 7] |
-                            ((uint32_t)buf[offset + 8] << 8) |
-                            ((uint32_t)buf[offset + 9] << 16);
+    mavlink_message_t msg;
+    mavlink_status_t status;
 
-            uint16_t total_len = 10 + payload_len + 2 + (incompat_flags & 0x01 ? 13 : 0);
-            if (offset + total_len > len) {
-                break; // Incomplete packet in chunk
-            }
-
-            const uint8_t *payload = &buf[offset + 10];
-
-            // 1. PARAM_REQUEST_LIST (#21)
-            if (msgid == MAVLINK_MSG_ID_PARAM_REQUEST_LIST && payload_len >= 2) {
-                uint8_t target_sys = payload[0];
-                uint8_t target_comp = payload[1];
-                if ((target_sys == 1 || target_sys == 0) &&
-                    (target_comp == MAV_COMP_ID_OPTICAL_FLOW || target_comp == 0)) {
+    for (uint16_t i = 0; i < len; i++) {
+        if (mavlink_parse_char(chan, buf[i], &msg, &status)) {
+            switch (msg.msgid) {
+            case MAVLINK_MSG_ID_PARAM_REQUEST_LIST: {
+                mavlink_param_request_list_t req;
+                mavlink_msg_param_request_list_decode(&msg, &req);
+                if ((req.target_system == 1 || req.target_system == 0) &&
+                    (req.target_component == MAV_COMP_ID_OPTICAL_FLOW || req.target_component == 0)) {
                     send_all_params_list();
                 }
+                break;
             }
-            // 2. PARAM_REQUEST_READ (#20)
-            else if (msgid == MAVLINK_MSG_ID_PARAM_REQUEST_READ && payload_len >= 20) {
-                int16_t param_idx = (int16_t)(payload[0] | (payload[1] << 8));
-                uint8_t target_sys = payload[2];
-                uint8_t target_comp = payload[3];
-                char param_id[17] = {0};
-                memcpy(param_id, &payload[4], 16);
-
-                if ((target_sys == 1 || target_sys == 0) &&
-                    (target_comp == MAV_COMP_ID_OPTICAL_FLOW || target_comp == 0)) {
-                    if (param_idx >= 0 && param_idx < (int16_t)PARAM_COUNT) {
-                        send_param_value_index((uint16_t)param_idx);
+            case MAVLINK_MSG_ID_PARAM_REQUEST_READ: {
+                mavlink_param_request_read_t req;
+                mavlink_msg_param_request_read_decode(&msg, &req);
+                if ((req.target_system == 1 || req.target_system == 0) &&
+                    (req.target_component == MAV_COMP_ID_OPTICAL_FLOW || req.target_component == 0)) {
+                    if (req.param_index >= 0 && req.param_index < (int16_t)PARAM_COUNT) {
+                        send_param_value_index((uint16_t)req.param_index);
                     } else {
-                        for (uint16_t i = 0; i < PARAM_COUNT; i++) {
-                            if (strncmp(s_params[i].name, param_id, 16) == 0) {
-                                send_param_value_index(i);
+                        for (uint16_t idx = 0; idx < PARAM_COUNT; idx++) {
+                            if (strncmp(s_params[idx].name, req.param_id, 16) == 0) {
+                                send_param_value_index(idx);
                                 break;
                             }
                         }
                     }
                 }
+                break;
             }
-            // 3. PARAM_SET (#23)
-            else if (msgid == MAVLINK_MSG_ID_PARAM_SET && payload_len >= 23) {
-                float val;
-                memcpy(&val, &payload[0], sizeof(float));
-                uint8_t target_sys = payload[4];
-                uint8_t target_comp = payload[5];
-                char param_id[17] = {0};
-                memcpy(param_id, &payload[6], 16);
-                uint8_t ptype = payload[22];
-                (void)ptype;
-
-                if ((target_sys == 1 || target_sys == 0) &&
-                    (target_comp == MAV_COMP_ID_OPTICAL_FLOW || target_comp == 0)) {
+            case MAVLINK_MSG_ID_PARAM_SET: {
+                mavlink_param_set_t req;
+                mavlink_msg_param_set_decode(&msg, &req);
+                if ((req.target_system == 1 || req.target_system == 0) &&
+                    (req.target_component == MAV_COMP_ID_OPTICAL_FLOW || req.target_component == 0)) {
+                    char name_buf[17] = {0};
+                    memcpy(name_buf, req.param_id, 16);
                     ESP_LOGI(TAG, "Received PARAM_SET for %s = %.2f from sys %d comp %d",
-                             param_id, val, sysid, compid);
+                             name_buf, req.param_value, msg.sysid, msg.compid);
 
-                    cams3_param_set(param_id, val);
+                    cams3_param_set(name_buf, req.param_value);
 
                     // Send back updated PARAM_VALUE as confirmation
-                    for (uint16_t i = 0; i < PARAM_COUNT; i++) {
-                        if (strncmp(s_params[i].name, param_id, 16) == 0) {
-                            send_param_value_index(i);
+                    for (uint16_t idx = 0; idx < PARAM_COUNT; idx++) {
+                        if (strncmp(s_params[idx].name, name_buf, 16) == 0) {
+                            send_param_value_index(idx);
                             break;
                         }
                     }
                 }
+                break;
             }
-            // 4. COMMAND_LONG (#76) - MAV_CMD_PREFLIGHT_STORAGE (#245)
-            else if (msgid == MAVLINK_MSG_ID_COMMAND_LONG && payload_len >= 33) {
-                float param1;
-                memcpy(&param1, &payload[0], sizeof(float));
-                uint16_t command = payload[28] | ((uint16_t)payload[29] << 8);
-                uint8_t target_sys = payload[30];
-                uint8_t target_comp = payload[31];
-
-                if ((target_sys == 1 || target_sys == 0) &&
-                    (target_comp == MAV_COMP_ID_OPTICAL_FLOW || target_comp == 0)) {
-                    if (command == MAV_CMD_PREFLIGHT_STORAGE) {
+            case MAVLINK_MSG_ID_COMMAND_LONG: {
+                mavlink_command_long_t cmd;
+                mavlink_msg_command_long_decode(&msg, &cmd);
+                if ((cmd.target_system == 1 || cmd.target_system == 0) &&
+                    (cmd.target_component == MAV_COMP_ID_OPTICAL_FLOW || cmd.target_component == 0)) {
+                    if (cmd.command == MAV_CMD_PREFLIGHT_STORAGE) {
                         uint8_t ack_res = MAV_RESULT_ACCEPTED;
-                        if ((int)param1 == 0) {
-                            // Read from storage
+                        if ((int)cmd.param1 == 0) {
                             cams3_params_init();
-                        } else if ((int)param1 == 1) {
-                            // Write to storage
+                        } else if ((int)cmd.param1 == 1) {
                             cams3_params_save_all();
-                        } else if ((int)param1 == 2) {
-                            // Reset defaults
+                        } else if ((int)cmd.param1 == 2) {
                             cams3_params_reset_defaults();
                         } else {
                             ack_res = MAV_RESULT_DENIED;
                         }
 
-                        uint8_t ack_pkt[24];
-                        uint16_t ack_len = mavlink_pack_command_ack_v2(ack_pkt, &s_param_mav_seq, command, ack_res);
+                        mavlink_message_t ack_msg;
+                        uint8_t ack_pkt[MAVLINK_MAX_PACKET_LEN];
+                        mavlink_msg_command_ack_pack(
+                            1, MAV_COMP_ID_OPTICAL_FLOW,
+                            &ack_msg,
+                            cmd.command,
+                            ack_res,
+                            0, 0,
+                            msg.sysid, msg.compid
+                        );
+                        uint16_t ack_len = mavlink_msg_to_send_buffer(ack_pkt, &ack_msg);
                         mavlink_router_send_internal(ack_pkt, ack_len, MAV_ROUTE_DEST_GCS);
-                        ESP_LOGI(TAG, "Processed MAV_CMD_PREFLIGHT_STORAGE (action=%d, result=%d)", (int)param1, ack_res);
+                        ESP_LOGI(TAG, "Processed MAV_CMD_PREFLIGHT_STORAGE (action=%d, result=%d)", (int)cmd.param1, ack_res);
                     }
                 }
+                break;
             }
-
-            offset += total_len;
-        } else {
-            offset++;
+            default:
+                break;
+            }
         }
     }
+}
+
+void cams3_params_handle_mavlink_packet(const uint8_t *buf, uint16_t len)
+{
+    cams3_params_handle_mavlink_packet_chan(buf, len, MAVLINK_COMM_0);
 }

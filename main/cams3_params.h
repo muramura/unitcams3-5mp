@@ -81,6 +81,7 @@ esp_err_t cams3_params_save_all(void);
  * @param len Buffer length in bytes
  */
 void cams3_params_handle_mavlink_packet(const uint8_t *buf, uint16_t len);
+void cams3_params_handle_mavlink_packet_chan(const uint8_t *buf, uint16_t len, uint8_t chan);
 
 /**
  * @brief Callback function type for parameter changes

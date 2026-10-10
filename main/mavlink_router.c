@@ -12,7 +12,7 @@
 #include "esp_log.h"
 #include "lwip/sockets.h"
 #include "board_pins.h"
-#include "mavlink_heartbeat_pack.h"
+#include <mavlink/v2.0/common/mavlink.h>
 #include "cams3_params.h"
 #include "optical_flow.h"
 
@@ -121,7 +121,7 @@ static void uart_rx_task(void *pvParameters)
             s_bytes_from_fc += len;
 
             // Inspect incoming FC MAVLink packets for parameter requests or commands
-            cams3_params_handle_mavlink_packet(rx_buf, len);
+            cams3_params_handle_mavlink_packet_chan(rx_buf, len, MAVLINK_COMM_0);
 
             // Feed FC telemetry (climb rate, speed, alt) for optical flow height estimation
             optical_flow_feed_mavlink(rx_buf, len);
@@ -193,7 +193,7 @@ static void udp_rx_task(void *pvParameters)
             s_bytes_from_wifi += len;
 
             // Inspect incoming GCS (Mission Planner) MAVLink packets for parameter requests or sets
-            cams3_params_handle_mavlink_packet(rx_buf, len);
+            cams3_params_handle_mavlink_packet_chan(rx_buf, len, MAVLINK_COMM_1);
 
             // Learn client IP address, but keep destination port fixed to 14550!
             if (!s_has_client_addr ||
@@ -270,20 +270,34 @@ static void stats_task(void *pvParameters)
 // ----------------------------------------------------------------------
 static void heartbeat_task(void *pvParameters)
 {
-    uint8_t seq = 0;
-    uint8_t hb_packet[32];
-    uint8_t stat_packet[64];
+    uint8_t hb_packet[MAVLINK_MAX_PACKET_LEN];
+    uint8_t stat_packet[MAVLINK_MAX_PACKET_LEN];
 
     // Announce boot to GCS
     vTaskDelay(pdMS_TO_TICKS(1500));
-    uint16_t stat_len = mavlink_pack_statustext_v2(stat_packet, &seq, 6 /* INFO */, "CamS3: Router Active");
+    mavlink_message_t msg;
+    mavlink_msg_statustext_pack(
+        1, MAV_COMP_ID_OPTICAL_FLOW,
+        &msg,
+        MAV_SEVERITY_INFO,
+        "CamS3: Router Active",
+        0, 0
+    );
+    uint16_t stat_len = mavlink_msg_to_send_buffer(stat_packet, &msg);
     mavlink_router_send_internal(stat_packet, stat_len, MAV_ROUTE_DEST_ALL);
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000)); // Strict 1Hz interval
 
         // Send Component 197 HEARTBEAT (#0) to both FC (UART) and GCS (UDP)
-        uint16_t hb_len = mavlink_pack_heartbeat_v2(hb_packet, &seq);
+        mavlink_msg_heartbeat_pack(
+            1, MAV_COMP_ID_OPTICAL_FLOW,
+            &msg,
+            MAV_TYPE_ONBOARD_CONTROLLER,
+            MAV_AUTOPILOT_INVALID,
+            0, 0, MAV_STATE_ACTIVE
+        );
+        uint16_t hb_len = mavlink_msg_to_send_buffer(hb_packet, &msg);
         mavlink_router_send_internal(hb_packet, hb_len, MAV_ROUTE_DEST_ALL);
     }
 }
