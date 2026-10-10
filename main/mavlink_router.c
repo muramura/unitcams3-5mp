@@ -12,7 +12,7 @@
 #include "esp_log.h"
 #include "lwip/sockets.h"
 #include "board_pins.h"
-#include <mavlink/v2.0/common/mavlink.h>
+#include <mavlink/v2.0/ardupilotmega/mavlink.h>
 #include "cams3_params.h"
 #include "optical_flow.h"
 

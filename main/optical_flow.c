@@ -10,7 +10,7 @@
 #include "freertos/task.h"
 #include "board_pins.h"
 #include "mavlink_router.h"
-#include <mavlink/v2.0/common/mavlink.h>
+#include <mavlink/v2.0/ardupilotmega/mavlink.h>
 #include "jpeg_decoder.h"
 #include "cams3_params.h"
 

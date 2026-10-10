@@ -8,7 +8,7 @@
 #include "nvs.h"
 #include "esp_log.h"
 #include "esp_camera.h"
-#include <mavlink/v2.0/common/mavlink.h>
+#include <mavlink/v2.0/ardupilotmega/mavlink.h>
 #include "mavlink_router.h"
 
 static const char *TAG = "cams3_params";

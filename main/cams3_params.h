@@ -4,12 +4,18 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "esp_err.h"
+#include <mavlink/v2.0/ardupilotmega/mavlink.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #define CAMS3_MAX_PARAMS 24
+
+// Component ID 197: Visual Inertial Odometry / Optical Flow (ArduPilot convention)
+#ifndef MAV_COMP_ID_OPTICAL_FLOW
+#define MAV_COMP_ID_OPTICAL_FLOW 197
+#endif
 
 /**
  * @brief CamS3 Parameter Definition Structure
