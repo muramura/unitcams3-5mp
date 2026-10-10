@@ -18,7 +18,7 @@
 
 static const char *TAG = "mav_router";
 
-#define MAVLINK_ROUTER_QUEUE_LEN    16
+#define MAVLINK_ROUTER_QUEUE_LEN    64
 
 typedef struct {
     uint16_t len;
@@ -191,10 +191,7 @@ static void udp_rx_task(void *pvParameters)
 
             s_bytes_from_wifi += len;
 
-            // Inspect incoming GCS (Mission Planner) MAVLink packets for parameter requests or sets
-            cams3_params_handle_mavlink_packet_chan(rx_buf, len, MAVLINK_COMM_1);
-
-            // Learn client IP address, but keep destination port fixed to 14550!
+            // Learn client IP address FIRST so immediate responses are sent to the active client!
             if (!s_has_client_addr ||
                 s_client_addr.sin_addr.s_addr != from_addr.sin_addr.s_addr) {
                 s_client_addr.sin_addr = from_addr.sin_addr;
@@ -203,6 +200,9 @@ static void udp_rx_task(void *pvParameters)
                 ESP_LOGI(TAG, "Discovered active GCS at %s - sending telemetry to %s:%d",
                          from_ip, from_ip, MAVLINK_ROUTER_UDP_PORT);
             }
+
+            // Inspect incoming GCS (Mission Planner) MAVLink packets for parameter requests or sets
+            cams3_params_handle_mavlink_packet_chan(rx_buf, len, MAVLINK_COMM_1);
 
             // Forward commands to StampFly FC via FC Tx Queue
             int offset = 0;
@@ -365,10 +365,10 @@ esp_err_t mavlink_router_send_internal(const uint8_t *packet, uint16_t length, m
         }
     }
 
-    // 2. Dispatch to GCS Queue (Wi-Fi UDP) - Non-blocking (0 timeout)
+    // 2. Dispatch to GCS Queue (Wi-Fi UDP) - Allow brief pacing delay for internal telemetry/params
     if (dest & MAV_ROUTE_DEST_GCS) {
         if (s_wifi_tx_queue) {
-            if (xQueueSend(s_wifi_tx_queue, &item, 0) != pdTRUE) {
+            if (xQueueSend(s_wifi_tx_queue, &item, pdMS_TO_TICKS(15)) != pdTRUE) {
                 s_wifi_tx_drops++;
             }
         }

@@ -239,8 +239,8 @@ static void send_all_params_list(void)
     ESP_LOGI(TAG, "Responding to PARAM_REQUEST_LIST (%u params total)", (unsigned)PARAM_COUNT);
     for (uint16_t i = 0; i < PARAM_COUNT; i++) {
         send_param_value_index(i);
-        // Pacing delay to avoid overloading UDP queue
-        vTaskDelay(pdMS_TO_TICKS(4));
+        // Light pacing delay between param value frames
+        vTaskDelay(pdMS_TO_TICKS(2));
     }
 }
 
