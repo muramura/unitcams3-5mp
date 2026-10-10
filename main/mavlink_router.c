@@ -324,11 +324,11 @@ esp_err_t mavlink_router_init(void)
     cams3_params_init();
 
     // Pin all routing tasks to Core 1 (leaving Core 0 100% dedicated to Camera and Vision Pipelines)
-    xTaskCreatePinnedToCore(uart_rx_task,   "uart_rx_task",   3072, NULL, 10, NULL, 1);
-    xTaskCreatePinnedToCore(uart_tx_task,   "uart_tx_task",   3072, NULL,  9, NULL, 1);
-    xTaskCreatePinnedToCore(udp_rx_task,    "udp_rx_task",    3072, NULL,  9, NULL, 1);
-    xTaskCreatePinnedToCore(wifi_tx_task,   "wifi_tx_task",   3072, NULL,  8, NULL, 1);
-    xTaskCreatePinnedToCore(heartbeat_task, "heartbeat_task", 2560, NULL,  5, NULL, 1);
+    xTaskCreatePinnedToCore(uart_rx_task,   "uart_rx_task",   4096, NULL, 10, NULL, 1);
+    xTaskCreatePinnedToCore(uart_tx_task,   "uart_tx_task",   4096, NULL,  9, NULL, 1);
+    xTaskCreatePinnedToCore(udp_rx_task,    "udp_rx_task",    4096, NULL,  9, NULL, 1);
+    xTaskCreatePinnedToCore(wifi_tx_task,   "wifi_tx_task",   4096, NULL,  8, NULL, 1);
+    xTaskCreatePinnedToCore(heartbeat_task, "heartbeat_task", 4096, NULL,  5, NULL, 1);
     xTaskCreatePinnedToCore(stats_task,     "router_stats",   2048, NULL,  1, NULL, 1);
 
     ESP_LOGI(TAG, "MAVLink Router (Dual-Queue + Independent 1Hz Heartbeat) started on Core 1");

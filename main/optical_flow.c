@@ -365,7 +365,7 @@ static void optical_flow_tx_task(void *pvParameters)
 {
     ESP_LOGI(TAG, "Optical Flow Telemetry Broadcaster started on Core %d (Rock-Solid 20.0Hz)", xPortGetCoreID());
 
-    uint8_t mav_packet[46];
+    uint8_t mav_packet[MAVLINK_MAX_PACKET_LEN];
     const TickType_t period_ticks = pdMS_TO_TICKS(50); // Exact 50.0 ms (20Hz)
     TickType_t last_wake_time = xTaskGetTickCount();
 
@@ -554,7 +554,7 @@ esp_err_t optical_flow_start(void)
     BaseType_t res = xTaskCreatePinnedToCore(
         optical_flow_tx_task,
         "opt_flow_tx",
-        3072,
+        4096,
         NULL,
         5,
         NULL,
@@ -623,8 +623,8 @@ static void optical_flow_dummy_task(void *pvParameters)
     ESP_LOGI(TAG, "  Target: StampFly FC (UART 2Mbps) + GCS (UDP 14550)");
     ESP_LOGI(TAG, "==========================================================");
 
-    uint8_t flow_packet[64];
-    uint8_t target_packet[80];
+    uint8_t flow_packet[MAVLINK_MAX_PACKET_LEN];
+    uint8_t target_packet[MAVLINK_MAX_PACKET_LEN];
     uint32_t count = 0;
 
     const int16_t dummy_flow_x = 123;
@@ -698,7 +698,7 @@ esp_err_t optical_flow_dummy_start(void)
     BaseType_t res = xTaskCreatePinnedToCore(
         optical_flow_dummy_task,
         "opt_flow_dummy",
-        3072,
+        4096,
         NULL,
         5,
         NULL,

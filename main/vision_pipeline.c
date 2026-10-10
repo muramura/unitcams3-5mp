@@ -70,7 +70,7 @@ static void vision_dispatcher_task(void *pvParameters)
         return;
     }
 
-    uint8_t mav_packet[80];
+    uint8_t mav_packet[MAVLINK_MAX_PACKET_LEN];
     int64_t last_time_us = esp_timer_get_time();
     int64_t last_stats_us = last_time_us;
     uint32_t frame_count = 0;
@@ -255,7 +255,7 @@ esp_err_t vision_pipeline_start(void)
     BaseType_t res = xTaskCreatePinnedToCore(
         vision_dispatcher_task,
         "vision_hub",
-        4096,
+        6144,
         NULL,
         7,
         NULL,
