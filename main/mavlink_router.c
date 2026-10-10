@@ -19,7 +19,6 @@
 static const char *TAG = "mav_router";
 
 #define MAVLINK_ROUTER_QUEUE_LEN    16
-#define MAVLINK_MAX_PACKET_LEN      280
 
 typedef struct {
     uint16_t len;
