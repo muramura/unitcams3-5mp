@@ -210,101 +210,20 @@ void cams3_params_register_change_callback(cams3_param_change_cb_t cb)
 }
 
 // -------------------------------------------------------------
-// MAVLink Parameter Protocol Stream Handler
+// MAVLink Parameter Protocol Stream Handler (Disabled)
 // -------------------------------------------------------------
-
-static void send_param_value_index(uint16_t index)
-{
-    if (index >= PARAM_COUNT) return;
-
-    mavlink_message_t msg;
-    uint8_t packet[MAVLINK_MAX_PACKET_LEN];
-    // Use MAVLINK_COMM_1 (Wi-Fi channel) to maintain proper sequence counter
-    mavlink_msg_param_value_pack_chan(
-        1,                         // system_id (FC)
-        MAV_COMP_ID_OPTICAL_FLOW,  // component_id (197)
-        MAVLINK_COMM_1,
-        &msg,
-        s_params[index].name,
-        s_params[index].value,
-        s_params[index].type,
-        PARAM_COUNT,
-        index
-    );
-
-    uint16_t len = mavlink_msg_to_send_buffer(packet, &msg);
-    mavlink_router_send_internal(packet, len, MAV_ROUTE_DEST_GCS);
-}
-
-static void send_all_params_list(void)
-{
-    ESP_LOGI(TAG, "Responding to PARAM_REQUEST_LIST for CamS3 (%u params total)", (unsigned)PARAM_COUNT);
-
-    // Enqueue all 14 parameters non-blockingly without delays
-    for (uint16_t i = 0; i < PARAM_COUNT; i++) {
-        send_param_value_index(i);
-    }
-}
 
 void cams3_params_handle_mavlink_msg(const mavlink_message_t *msg)
 {
     if (!msg) return;
 
     switch (msg->msgid) {
-    case MAVLINK_MSG_ID_PARAM_REQUEST_LIST: {
-        mavlink_param_request_list_t req;
-        mavlink_msg_param_request_list_decode(msg, &req);
-        // Only respond when specifically requested for CamS3 (Component 197).
-        // If target_component is 0 (broadcast), CamS3 stays silent to avoid conflicting
-        // with the FC which streams ~800 parameters back to the GCS.
-        if ((req.target_system == 1 || req.target_system == 0) &&
-            req.target_component == MAV_COMP_ID_OPTICAL_FLOW) {
-            send_all_params_list();
-        }
+    case MAVLINK_MSG_ID_PARAM_REQUEST_LIST:
+    case MAVLINK_MSG_ID_PARAM_REQUEST_READ:
+    case MAVLINK_MSG_ID_PARAM_SET:
+        // Disabled: All MAVLink parameter transactions are forwarded directly to the FC.
+        // CamS3 stays completely silent on the parameter protocol.
         break;
-    }
-    case MAVLINK_MSG_ID_PARAM_REQUEST_READ: {
-        mavlink_param_request_read_t req;
-        mavlink_msg_param_request_read_decode(msg, &req);
-        // Only respond if explicitly targeted to CamS3 (Component 197)
-        if ((req.target_system == 1 || req.target_system == 0) &&
-            req.target_component == MAV_COMP_ID_OPTICAL_FLOW) {
-            if (req.param_index >= 0 && req.param_index < (int16_t)PARAM_COUNT) {
-                send_param_value_index((uint16_t)req.param_index);
-            } else {
-                for (uint16_t idx = 0; idx < PARAM_COUNT; idx++) {
-                    if (strncmp(s_params[idx].name, req.param_id, 16) == 0) {
-                        send_param_value_index(idx);
-                        break;
-                    }
-                }
-            }
-        }
-        break;
-    }
-    case MAVLINK_MSG_ID_PARAM_SET: {
-        mavlink_param_set_t req;
-        mavlink_msg_param_set_decode(msg, &req);
-        // Only handle if explicitly targeted to CamS3 (Component 197)
-        if ((req.target_system == 1 || req.target_system == 0) &&
-            req.target_component == MAV_COMP_ID_OPTICAL_FLOW) {
-            char name_buf[17] = {0};
-            memcpy(name_buf, req.param_id, 16);
-            ESP_LOGI(TAG, "Received PARAM_SET for %s = %.2f from sys %d comp %d",
-                     name_buf, req.param_value, msg->sysid, msg->compid);
-
-            cams3_param_set(name_buf, req.param_value);
-
-            // Send back updated PARAM_VALUE immediately as confirmation
-            for (uint16_t idx = 0; idx < PARAM_COUNT; idx++) {
-                if (strncmp(s_params[idx].name, name_buf, 16) == 0) {
-                    send_param_value_index(idx);
-                    break;
-                }
-            }
-        }
-        break;
-    }
     case MAVLINK_MSG_ID_COMMAND_LONG: {
         mavlink_command_long_t cmd;
         mavlink_msg_command_long_decode(msg, &cmd);

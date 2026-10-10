@@ -156,6 +156,19 @@ static void get_msg_targets(const mavlink_message_t *msg, int16_t *target_sys, i
  */
 static route_action_t route_packet(const mavlink_message_t *msg)
 {
+    route_action_t action;
+
+    // All parameter messages (PARAM_REQUEST_LIST, PARAM_REQUEST_READ, PARAM_SET)
+    // are ALWAYS forwarded to the other device (GCS -> FC, FC -> GCS).
+    // CamS3 emits NO PARAM_VALUE messages, ensuring the FC parameter stream is completely unhindered.
+    if (msg->msgid == MAVLINK_MSG_ID_PARAM_REQUEST_LIST ||
+        msg->msgid == MAVLINK_MSG_ID_PARAM_REQUEST_READ ||
+        msg->msgid == MAVLINK_MSG_ID_PARAM_SET) {
+        action.process_locally = false;
+        action.forward_other_device = true;
+        return action;
+    }
+
     int16_t target_sys = -1;
     int16_t target_comp = -1;
     get_msg_targets(msg, &target_sys, &target_comp);
@@ -174,8 +187,6 @@ static route_action_t route_packet(const mavlink_message_t *msg)
     bool is_broadcast_comp = (!has_target_comp) || (target_comp == 0);
     bool is_pure_broadcast = is_broadcast_sys && is_broadcast_comp;
     bool is_system_broadcast = sys_match && is_broadcast_comp;
-
-    route_action_t action;
 
     if (is_unicast_for_cams3) {
         // 自分宛て (Sys 1, Comp 197): 他の通信デバイスへ送信しません！
@@ -219,8 +230,9 @@ static void uart_rx_task(void *pvParameters)
                     route_action_t act = route_packet(&msg);
 
                     // 1. Process locally on CamS3 if targeted to CamS3 or broadcast
+                    // Note: Local MAVLink parameter handling is disabled; all params handled by FC
                     if (act.process_locally) {
-                        cams3_params_handle_mavlink_msg(&msg);
+                        (void)act.process_locally;
                     }
 
                     // 2. Forward to Wi-Fi (GCS) if NOT consumed exclusively by CamS3
@@ -303,8 +315,9 @@ static void udp_rx_task(void *pvParameters)
                     route_action_t act = route_packet(&msg);
 
                     // 1. Process locally on CamS3 if targeted to CamS3 or broadcast
+                    // Note: Local MAVLink parameter handling is disabled; all params handled by FC
                     if (act.process_locally) {
-                        cams3_params_handle_mavlink_msg(&msg);
+                        (void)act.process_locally;
                     }
 
                     // 2. Forward to StampFly FC (UART) if NOT consumed exclusively by CamS3
