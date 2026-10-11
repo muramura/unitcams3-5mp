@@ -74,6 +74,9 @@ static esp_err_t save_param_to_nvs(const char *name, float val)
     return err;
 }
 
+static TaskHandle_t s_param_stream_task_handle = NULL;
+static void param_stream_worker_task(void *pvParameters);
+
 esp_err_t cams3_params_init(void)
 {
     if (s_param_mutex == NULL) {
@@ -126,6 +129,11 @@ esp_err_t cams3_params_init(void)
     xSemaphoreGive(s_param_mutex);
 
     ESP_LOGI(TAG, "CamS3 Parameter Subsystem initialized with %u parameters", (unsigned)PARAM_COUNT);
+
+    if (s_param_stream_task_handle == NULL) {
+        xTaskCreatePinnedToCore(param_stream_worker_task, "param_stream", 3072, NULL, 5, &s_param_stream_task_handle, 1);
+    }
+
     return ESP_OK;
 }
 
@@ -236,6 +244,22 @@ static void send_param_value_index(uint16_t index)
     mavlink_router_send_internal(packet, len, MAV_ROUTE_DEST_GCS);
 }
 
+static void param_stream_worker_task(void *pvParameters)
+{
+    while (1) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        ESP_LOGI(TAG, "Starting paced PARAM_VALUE stream for CamS3 (%u params)...", (unsigned)PARAM_COUNT);
+
+        for (uint16_t i = 0; i < PARAM_COUNT; i++) {
+            send_param_value_index(i);
+            vTaskDelay(pdMS_TO_TICKS(3));
+        }
+
+        ESP_LOGI(TAG, "Completed PARAM_VALUE stream (%u params sent)", (unsigned)PARAM_COUNT);
+    }
+}
+
 static void send_all_params_list(void)
 {
     ESP_LOGI(TAG, "Responding to PARAM_REQUEST_LIST for CamS3 (%u params total)", (unsigned)PARAM_COUNT);
@@ -257,9 +281,13 @@ void cams3_params_handle_mavlink_msg(const mavlink_message_t *msg)
         // Respond if targeted to CamS3 (197) or broadcast (0)
         if ((req.target_system == 1 || req.target_system == 0) &&
             (req.target_component == MAV_COMP_ID_OPTICAL_FLOW || req.target_component == 0)) {
-            ESP_LOGI(TAG, "Received PARAM_REQUEST_LIST (sys=%d, comp=%d) -> sending %u params",
-                     req.target_system, req.target_component, (unsigned)PARAM_COUNT);
-            send_all_params_list();
+            ESP_LOGI(TAG, "Received PARAM_REQUEST_LIST (sys=%d, comp=%d) -> triggering param stream worker",
+                     req.target_system, req.target_component);
+            if (s_param_stream_task_handle) {
+                xTaskNotifyGive(s_param_stream_task_handle);
+            } else {
+                send_all_params_list();
+            }
         }
         break;
     }
