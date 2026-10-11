@@ -1,13 +1,17 @@
 #include "camera_stream.h"
 #include <string.h>
+#include <stdlib.h>
 #include <sys/socket.h>
 #include <netinet/tcp.h>
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "cams3_params.h"
+#include "web_page.h"
 
 static const char *TAG = "camera_stream";
 
@@ -126,28 +130,141 @@ static esp_err_t capture_handler(httpd_req_t *req)
     return httpd_resp_send(req, (const char *)s_ping_pong_buf[idx], s_ping_pong_len[idx]);
 }
 
-// Handler: Web HUD Index Page (/)
-static const char INDEX_HTML[] =
-    "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
-    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-    "<title>StampFly FPV & Optical Flow</title>"
-    "<style>"
-    "body{margin:0;background:#111;color:#eee;font-family:sans-serif;text-align:center;}"
-    "h2{margin:12px 0 6px 0;font-size:18px;color:#00d2ff;}"
-    ".status{font-size:13px;color:#aaa;margin-bottom:10px;}"
-    ".video-box{max-width:95vw;max-height:75vh;border-radius:8px;box-shadow:0 4px 16px rgba(0,210,255,0.2);}"
-    ".info{margin-top:12px;font-size:12px;color:#777;}"
-    "</style></head><body>"
-    "<h2>🚁 StampFly FPV & Optical Flow HUD</h2>"
-    "<div class=\"status\">Wi-Fi: Connected | MAVLink #100: Active | Stream: /stream</div>"
-    "<img class=\"video-box\" src=\"/stream\" alt=\"Live Video Stream\"/>"
-    "<div class=\"info\">In Mission Planner: Right-click HUD -&gt; <b>Set MJPEG Source</b> -&gt; <code>http://192.168.4.1/stream</code></div>"
-    "</body></html>";
-
+// Handler: Web Console & HUD Index Page (/)
 static esp_err_t index_handler(httpd_req_t *req)
 {
-    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     return httpd_resp_send(req, INDEX_HTML, strlen(INDEX_HTML));
+}
+
+// Handler: GET /api/params
+static esp_err_t api_params_get_handler(httpd_req_t *req)
+{
+    char *json_buf = (char *)malloc(2048);
+    if (!json_buf) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = cams3_params_to_json(json_buf, 2048);
+    if (err != ESP_OK) {
+        free(json_buf);
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+    esp_err_t res = httpd_resp_send(req, json_buf, strlen(json_buf));
+    free(json_buf);
+    return res;
+}
+
+// Handler: POST & GET /api/param
+static esp_err_t api_param_set_handler(httpd_req_t *req)
+{
+    char param_name[32] = {0};
+    char param_val_str[32] = {0};
+    char buf[128] = {0};
+
+    // 1. Check URL query string (?name=...&val=...)
+    size_t query_len = httpd_req_get_url_query_len(req);
+    if (query_len > 0 && query_len < sizeof(buf)) {
+        if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
+            httpd_query_key_value(buf, "name", param_name, sizeof(param_name));
+            httpd_query_key_value(buf, "val", param_val_str, sizeof(param_val_str));
+        }
+    }
+
+    // 2. If not found in query, read request body
+    if (strlen(param_name) == 0 && req->content_len > 0 && req->content_len < sizeof(buf)) {
+        int ret = httpd_req_recv(req, buf, req->content_len);
+        if (ret > 0) {
+            buf[ret] = '\0';
+            if (httpd_query_key_value(buf, "name", param_name, sizeof(param_name)) != ESP_OK) {
+                // Try simple JSON parse
+                char *name_ptr = strstr(buf, "\"name\":");
+                if (name_ptr) {
+                    sscanf(name_ptr, "\"name\":\"%31[^\"]\"", param_name);
+                }
+                char *val_ptr = strstr(buf, "\"val\":");
+                if (val_ptr) {
+                    sscanf(val_ptr, "\"val\":%31[^,}]", param_val_str);
+                }
+            } else {
+                httpd_query_key_value(buf, "val", param_val_str, sizeof(param_val_str));
+            }
+        }
+    }
+
+    if (strlen(param_name) == 0 || strlen(param_val_str) == 0) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        httpd_resp_send(req, "{\"status\":\"error\",\"msg\":\"missing name or val\"}", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
+    float val = (float)atof(param_val_str);
+    esp_err_t set_err = cams3_param_set(param_name, val);
+    if (set_err != ESP_OK) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        char err_res[96];
+        snprintf(err_res, sizeof(err_res), "{\"status\":\"error\",\"code\":%d}", set_err);
+        httpd_resp_send(req, err_res, HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
+    ESP_LOGI(TAG, "Web API updated param '%s' = %.4f", param_name, val);
+
+    char resp[128];
+    snprintf(resp, sizeof(resp), "{\"status\":\"ok\",\"name\":\"%s\",\"val\":%.4f}", param_name, val);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    return httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+}
+
+// Handler: POST /api/reset
+static esp_err_t api_reset_handler(httpd_req_t *req)
+{
+    cams3_params_reset_defaults();
+    ESP_LOGI(TAG, "Web API reset all parameters to defaults");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    return httpd_resp_send(req, "{\"status\":\"ok\",\"msg\":\"defaults restored\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+// Handler: POST /api/reboot
+static void reboot_timer_task(void *pvParameters)
+{
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_restart();
+}
+
+static esp_err_t api_reboot_handler(httpd_req_t *req)
+{
+    ESP_LOGW(TAG, "Web API requested device reboot");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_send(req, "{\"status\":\"ok\",\"msg\":\"rebooting in 1s\"}", HTTPD_RESP_USE_STRLEN);
+
+    // Spawn detached task to reboot after 1 second
+    xTaskCreate(reboot_timer_task, "reboot_timer", 2048, NULL, 5, NULL);
+    return ESP_OK;
+}
+
+// Handler: OPTIONS /api/* (CORS Preflight)
+static esp_err_t api_options_handler(httpd_req_t *req)
+{
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
 }
 
 esp_err_t camera_stream_start(void)
@@ -176,6 +293,7 @@ esp_err_t camera_stream_start(void)
     config.ctrl_port = CAMERA_STREAM_PORT + 1000;
     config.stack_size = 8192;
     config.core_id = 0; // Run HTTP streaming on Core 0 alongside vision pipeline
+    config.uri_match_fn = httpd_uri_match_wildcard;
 
     httpd_uri_t index_uri = {
         .uri       = "/",
@@ -198,12 +316,60 @@ esp_err_t camera_stream_start(void)
         .user_ctx  = NULL
     };
 
-    ESP_LOGI(TAG, "Starting HTTP Stream Server on port %d...", config.server_port);
+    httpd_uri_t api_params_get_uri = {
+        .uri       = "/api/params",
+        .method    = HTTP_GET,
+        .handler   = api_params_get_handler,
+        .user_ctx  = NULL
+    };
+
+    httpd_uri_t api_param_set_uri = {
+        .uri       = "/api/param",
+        .method    = HTTP_POST,
+        .handler   = api_param_set_handler,
+        .user_ctx  = NULL
+    };
+
+    httpd_uri_t api_param_get_set_uri = {
+        .uri       = "/api/param",
+        .method    = HTTP_GET,
+        .handler   = api_param_set_handler,
+        .user_ctx  = NULL
+    };
+
+    httpd_uri_t api_reset_uri = {
+        .uri       = "/api/reset",
+        .method    = HTTP_POST,
+        .handler   = api_reset_handler,
+        .user_ctx  = NULL
+    };
+
+    httpd_uri_t api_reboot_uri = {
+        .uri       = "/api/reboot",
+        .method    = HTTP_POST,
+        .handler   = api_reboot_handler,
+        .user_ctx  = NULL
+    };
+
+    httpd_uri_t api_options_uri = {
+        .uri       = "/api/*",
+        .method    = HTTP_OPTIONS,
+        .handler   = api_options_handler,
+        .user_ctx  = NULL
+    };
+
+    ESP_LOGI(TAG, "Starting HTTP Console & Stream Server on port %d...", config.server_port);
     if (httpd_start(&s_stream_httpd, &config) == ESP_OK) {
         httpd_register_uri_handler(s_stream_httpd, &index_uri);
         httpd_register_uri_handler(s_stream_httpd, &stream_uri);
         httpd_register_uri_handler(s_stream_httpd, &capture_uri);
-        ESP_LOGI(TAG, "Stream Server ready. Live view at http://192.168.4.1/stream");
+        httpd_register_uri_handler(s_stream_httpd, &api_params_get_uri);
+        httpd_register_uri_handler(s_stream_httpd, &api_param_set_uri);
+        httpd_register_uri_handler(s_stream_httpd, &api_param_get_set_uri);
+        httpd_register_uri_handler(s_stream_httpd, &api_reset_uri);
+        httpd_register_uri_handler(s_stream_httpd, &api_reboot_uri);
+        httpd_register_uri_handler(s_stream_httpd, &api_options_uri);
+        ESP_LOGI(TAG, "Web Console ready: http://192.168.4.1/ (API: /api/params, /api/param)");
         return ESP_OK;
     }
 

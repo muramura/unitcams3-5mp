@@ -388,3 +388,65 @@ void cams3_params_handle_mavlink_packet(const uint8_t *buf, uint16_t len)
 {
     cams3_params_handle_mavlink_packet_chan(buf, len, MAVLINK_COMM_0);
 }
+
+uint16_t cams3_params_get_count(void)
+{
+    return (uint16_t)PARAM_COUNT;
+}
+
+bool cams3_params_get_by_index(uint16_t index, cams3_param_entry_t *out_entry)
+{
+    if (index >= PARAM_COUNT || out_entry == NULL) {
+        return false;
+    }
+    if (s_param_mutex && xSemaphoreTake(s_param_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        *out_entry = s_params[index];
+        xSemaphoreGive(s_param_mutex);
+        return true;
+    }
+    return false;
+}
+
+esp_err_t cams3_params_to_json(char *buf, size_t max_len)
+{
+    if (!buf || max_len < 32) return ESP_ERR_INVALID_ARG;
+
+    if (s_param_mutex && xSemaphoreTake(s_param_mutex, pdMS_TO_TICKS(200)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    size_t offset = 0;
+    int written = snprintf(buf + offset, max_len - offset, "[");
+    if (written < 0 || written >= (max_len - offset)) {
+        xSemaphoreGive(s_param_mutex);
+        return ESP_ERR_NO_MEM;
+    }
+    offset += written;
+
+    for (size_t i = 0; i < PARAM_COUNT; i++) {
+        written = snprintf(buf + offset, max_len - offset,
+                           "%s{"name":"%s","val":%.4f,"def":%.4f,"min":%.4f,"max":%.4f,"ro":%d}",
+                           (i > 0) ? "," : "",
+                           s_params[i].name,
+                           s_params[i].value,
+                           s_params[i].default_val,
+                           s_params[i].min_val,
+                           s_params[i].max_val,
+                           s_params[i].readonly ? 1 : 0);
+        if (written < 0 || written >= (max_len - offset)) {
+            xSemaphoreGive(s_param_mutex);
+            return ESP_ERR_NO_MEM;
+        }
+        offset += written;
+    }
+
+    written = snprintf(buf + offset, max_len - offset, "]");
+    if (written < 0 || written >= (max_len - offset)) {
+        xSemaphoreGive(s_param_mutex);
+        return ESP_ERR_NO_MEM;
+    }
+    offset += written;
+
+    xSemaphoreGive(s_param_mutex);
+    return ESP_OK;
+}

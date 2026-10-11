@@ -102,6 +102,29 @@ typedef void (*cams3_param_change_cb_t)(const char *name, float value);
  */
 void cams3_params_register_change_callback(cams3_param_change_cb_t cb);
 
+/**
+ * @brief Get total number of registered parameters
+ */
+uint16_t cams3_params_get_count(void);
+
+/**
+ * @brief Get parameter entry by zero-based index
+ *
+ * @param index Parameter index (0 .. count-1)
+ * @param out_entry Pointer to structure receiving the parameter entry
+ * @return true if found, false if out of range
+ */
+bool cams3_params_get_by_index(uint16_t index, cams3_param_entry_t *out_entry);
+
+/**
+ * @brief Serialize all parameters into a JSON array string
+ *
+ * @param buf Output buffer
+ * @param max_len Size of output buffer
+ * @return ESP_OK on success, ESP_ERR_NO_MEM if buffer is too small
+ */
+esp_err_t cams3_params_to_json(char *buf, size_t max_len);
+
 #ifdef __cplusplus
 }
 #endif
