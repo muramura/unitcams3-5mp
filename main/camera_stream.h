@@ -13,7 +13,7 @@
  *        - Port 80 (Web & REST API):
  *          - /        : HTML Web HUD with live video & parameter tuner
  *          - /capture : Single JPEG snapshot
- *          - /api/*   : Parameter REST APIs (/api/params, /api/param, etc.)
+ *          - /api/xxx : Parameter REST APIs (/api/params, /api/param, etc.)
  *        - Port 81 (Dedicated MJPEG Stream):
  *          - /stream  : Standard multipart/x-mixed-replace MJPEG video stream (Mission Planner / browser)
  */
