@@ -146,12 +146,11 @@ static esp_err_t api_status_get_handler(httpd_req_t *req)
     optical_flow_metrics_t metrics = {0};
     optical_flow_get_latest(&metrics);
 
-    float z_est_en = 1.0f;
-    cams3_param_get("FLOW_Z_EST_EN", &z_est_en);
+    float z_est_en = cams3_param_get("FLOW_Z_EST_EN");
 
     char resp[256];
     snprintf(resp, sizeof(resp),
-             "{"status":"ok","distance_m":%.3f,"dx":%d,"dy":%d,"quality":%u,"fps":%.1f,"z_est_en":%d}",
+             "{\"status\":\"ok\",\"distance_m\":%.3f,\"dx\":%d,\"dy\":%d,\"quality\":%u,\"fps\":%.1f,\"z_est_en\":%d}",
              metrics.distance_m,
              metrics.dx,
              metrics.dy,
