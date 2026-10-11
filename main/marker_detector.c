@@ -97,77 +97,131 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
 
     uint8_t thresh = (uint8_t)((min_v + max_v) / 2);
 
-    // 2. Coarse Candidate Search: Scan horizontal lines to find dark outer border
-    int best_min_x = 0, best_max_x = 0;
-    int best_min_y = 0, best_max_y = 0;
-    int best_score = -1;
+    // 2. Coarse Candidate Search: Multi-slice Horizontal Span Analysis
+    // ArUco markers have distinct dark outer borders (left and right on scanlines)
+    // with quiet zone (white/bright) outside and arbitrary bit patterns inside.
+    typedef struct {
+        int y;
+        int cx;
+        int w;
+    } span_cand_t;
 
-    int step_y = 4;
-    int step_x = 2;
-    int min_marker_size = 12;
-    int max_marker_size = (int)(w * 0.90f);
+    #define MAX_CANDS 32
+    span_cand_t cands[MAX_CANDS];
+    int cand_count = 0;
 
-    for (int y = min_marker_size; y < h - min_marker_size; y += step_y) {
+    int min_size = 14;
+    int max_size = (int)(w * 0.85f);
+    int step_y = 3;
+
+    for (int y = min_size / 2; y < h - min_size / 2; y += step_y) {
         int row = y * w;
-        int dark_start = -1;
+        
+        // Find dark segments on this row
+        int seg_starts[16];
+        int seg_ends[16];
+        int seg_count = 0;
+        bool in_dark = false;
+        int start_x = 0;
 
-        for (int x = 2; x < w - 2; x += step_x) {
-            bool is_dark = (buf[row + x] < thresh);
-
-            if (is_dark && dark_start < 0) {
-                dark_start = x;
-            } else if (!is_dark && dark_start >= 0) {
-                int dark_len = x - dark_start;
-                if (dark_len >= min_marker_size && dark_len <= max_marker_size) {
-                    int cand_w = dark_len;
-                    int cand_h = cand_w;
-                    int top = y - cand_h / 2;
-                    int bottom = y + cand_h / 2;
-
-                    if (top >= 2 && bottom < h - 2) {
-                        int left = dark_start;
-                        int right = x;
-
-                        int center_x = (left + right) / 2;
-                        int center_y = y;
-
-                        uint8_t center_val = buf[center_y * w + center_x];
-                        uint8_t top_edge   = buf[top * w + center_x];
-                        uint8_t bot_edge   = buf[bottom * w + center_x];
-                        uint8_t left_edge  = buf[center_y * w + left];
-                        uint8_t right_edge = buf[center_y * w + right];
-
-                        if (top_edge < thresh && bot_edge < thresh &&
-                            left_edge < thresh && right_edge < thresh &&
-                            center_val > thresh) {
-                            
-                            int score = (int)center_val - (int)((top_edge + bot_edge + left_edge + right_edge) / 4);
-                            if (score > best_score) {
-                                best_score = score;
-                                best_min_x = left;
-                                best_max_x = right;
-                                best_min_y = top;
-                                best_max_y = bottom;
-                            }
-                        }
-                    }
+        for (int x = 2; x < w - 2; x++) {
+            bool dark = (buf[row + x] < thresh);
+            if (dark && !in_dark) {
+                in_dark = true;
+                start_x = x;
+            } else if (!dark && in_dark) {
+                in_dark = false;
+                if (seg_count < 16) {
+                    seg_starts[seg_count] = start_x;
+                    seg_ends[seg_count] = x - 1;
+                    seg_count++;
                 }
-                dark_start = -1;
+            }
+        }
+        if (in_dark && seg_count < 16) {
+            seg_starts[seg_count] = start_x;
+            seg_ends[seg_count] = w - 3;
+            seg_count++;
+        }
+
+        // Test if segments form an ArUco outer border cross-section
+        if (seg_count >= 2) {
+            // Left border is first segment, right border is last segment
+            int left_start = seg_starts[0];
+            int left_end = seg_ends[0];
+            int right_start = seg_starts[seg_count - 1];
+            int right_end = seg_ends[seg_count - 1];
+
+            int span_w = right_end - left_start;
+            int t_left = left_end - left_start + 1;
+            int t_right = right_end - right_start + 1;
+
+            if (span_w >= min_size && span_w <= max_size &&
+                t_left >= 1 && t_right >= 1 &&
+                t_left < span_w / 2 && t_right < span_w / 2) {
+                
+                if (cand_count < MAX_CANDS) {
+                    cands[cand_count].y = y;
+                    cands[cand_count].cx = (left_start + right_end) / 2;
+                    cands[cand_count].w = span_w;
+                    cand_count++;
+                }
+            }
+        } else if (seg_count == 1) {
+            // Could be top or bottom solid border
+            int span_w = seg_ends[0] - seg_starts[0];
+            if (span_w >= min_size && span_w <= max_size) {
+                if (cand_count < MAX_CANDS) {
+                    cands[cand_count].y = y;
+                    cands[cand_count].cx = (seg_starts[0] + seg_ends[0]) / 2;
+                    cands[cand_count].w = span_w;
+                    cand_count++;
+                }
             }
         }
     }
 
-    if (best_score <= 25) {
+    if (cand_count < 3) {
         return false;
     }
 
-    // 3. Fine Radial Ray-Casting from estimated center to extract 4 corners
-    float coarse_cx = (float)(best_min_x + best_max_x) * 0.5f;
-    float coarse_cy = (float)(best_min_y + best_max_y) * 0.5f;
-    float coarse_r = (float)(best_max_x - best_min_x) * 0.5f;
-    float max_search_r = coarse_r * 1.5f;
-    if (max_search_r < 10.0f) max_search_r = 10.0f;
+    // Sort cands by x to get robust median cx
+    for (int i = 0; i < cand_count - 1; i++) {
+        for (int j = i + 1; j < cand_count; j++) {
+            if (cands[j].cx < cands[i].cx) {
+                span_cand_t tmp = cands[i];
+                cands[i] = cands[j];
+                cands[j] = tmp;
+            }
+        }
+    }
+    float coarse_cx = (float)cands[cand_count / 2].cx;
 
+    int min_cand_y = cands[0].y;
+    int max_cand_y = cands[0].y;
+    float sum_w = 0.0f;
+    for (int i = 0; i < cand_count; i++) {
+        if (cands[i].y < min_cand_y) min_cand_y = cands[i].y;
+        if (cands[i].y > max_cand_y) max_cand_y = cands[i].y;
+        sum_w += (float)cands[i].w;
+    }
+    float coarse_cy = (float)(min_cand_y + max_cand_y) * 0.5f;
+    float coarse_w = sum_w / (float)cand_count;
+    float coarse_h = (float)(max_cand_y - min_cand_y);
+
+    // Aspect ratio check (allow tilt: 0.5 to 2.0)
+    if (coarse_h < (float)min_size * 0.6f || coarse_w < (float)min_size) {
+        return false;
+    }
+    float aspect = coarse_w / (coarse_h > 1.0f ? coarse_h : 1.0f);
+    if (aspect < 0.50f || aspect > 2.0f) {
+        return false;
+    }
+
+    float coarse_r = (coarse_w + coarse_h) * 0.25f;
+
+    // 3. Fine Inward Radial Ray-Tracing from outside background toward center
+    // Trace from bright background inward until hitting the dark outer border
     typedef struct {
         float angle;
         float dist;
@@ -187,22 +241,20 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
         rays[i].x = coarse_cx + coarse_r * cos_a;
         rays[i].y = coarse_cy + coarse_r * sin_a;
 
-        // Trace from center outward to find the transition from marker outer border (dark) to background (bright)
-        bool in_dark_border = false;
+        float max_r = coarse_r * 1.75f;
+        float min_r = coarse_r * 0.35f;
 
-        for (float r = 2.0f; r < max_search_r; r += 1.5f) {
+        for (float r = max_r; r >= min_r; r -= 1.0f) {
             int px = (int)(coarse_cx + r * cos_a);
             int py = (int)(coarse_cy + r * sin_a);
 
             if (px < 1 || px >= w - 1 || py < 1 || py >= h - 1) {
-                break;
+                continue;
             }
 
             uint8_t val = buf[py * w + px];
             if (val < thresh) {
-                in_dark_border = true;
-            } else if (in_dark_border && val >= thresh) {
-                // Hit the outside boundary of the dark border!
+                // First dark pixel encountered coming from the outside background!
                 rays[i].dist = r;
                 rays[i].x = (float)px;
                 rays[i].y = (float)py;
@@ -220,7 +272,7 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
         int prev = (i - 1 + RAY_COUNT) % RAY_COUNT;
         int next = (i + 1) % RAY_COUNT;
 
-        if (rays[i].dist >= rays[prev].dist && rays[i].dist >= rays[next].dist && rays[i].dist > coarse_r * 0.7f) {
+        if (rays[i].dist >= rays[prev].dist && rays[i].dist >= rays[next].dist && rays[i].dist > coarse_r * 0.70f) {
             peak_indices[peak_count++] = i;
         }
     }
@@ -228,7 +280,6 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
     // Select the best 4 corners
     float corners_x[4];
     float corners_y[4];
-    bool corners_found = false;
 
     if (peak_count >= 4) {
         // Sort peaks by distance descending
@@ -260,15 +311,22 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
             corners_x[i] = rays[best4[i]].x;
             corners_y[i] = rays[best4[i]].y;
         }
-        corners_found = true;
-    }
-
-    if (!corners_found) {
-        // Fallback to bounding box corners
-        corners_x[0] = (float)best_min_x; corners_y[0] = (float)best_min_y;
-        corners_x[1] = (float)best_max_x; corners_y[1] = (float)best_min_y;
-        corners_x[2] = (float)best_max_x; corners_y[2] = (float)best_max_y;
-        corners_x[3] = (float)best_min_x; corners_y[3] = (float)best_max_y;
+    } else {
+        // Fallback: Pick highest radial peak in each of 4 quadrants (every 9 rays = 90 deg)
+        int q_size = RAY_COUNT / 4;
+        for (int q = 0; q < 4; q++) {
+            int best_idx = q * q_size;
+            float max_d = -1.0f;
+            for (int j = 0; j < q_size; j++) {
+                int idx = q * q_size + j;
+                if (rays[idx].dist > max_d) {
+                    max_d = rays[idx].dist;
+                    best_idx = idx;
+                }
+            }
+            corners_x[q] = rays[best_idx].x;
+            corners_y[q] = rays[best_idx].y;
+        }
     }
 
     // 5. Align corners so P0 is top-left, P1 is top-right, P2 is bottom-right, P3 is bottom-left
