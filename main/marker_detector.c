@@ -188,8 +188,6 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
         rays[i].y = coarse_cy + coarse_r * sin_a;
 
         // Trace from center outward to find the transition from marker outer border (dark) to background (bright)
-        float last_x = coarse_cx;
-        float last_y = coarse_cy;
         bool in_dark_border = false;
 
         for (float r = 2.0f; r < max_search_r; r += 1.5f) {
@@ -210,8 +208,6 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
                 rays[i].y = (float)py;
                 break;
             }
-            last_x = (float)px;
-            last_y = (float)py;
         }
     }
 

@@ -48,7 +48,7 @@ static void draw_line(uint8_t *buf, int w, int h, int x0, int y0, int x1, int y1
     }
 }
 
-static void draw_rect(uint8_t *buf, int w, int h, int x0, int y0, int x1, int y1, uint8_t color) {
+static void __attribute__((unused)) draw_rect(uint8_t *buf, int w, int h, int x0, int y0, int x1, int y1, uint8_t color) {
     draw_line(buf, w, h, x0, y0, x1, y0, color);
     draw_line(buf, w, h, x1, y0, x1, y1, color);
     draw_line(buf, w, h, x1, y1, x0, y1, color);
