@@ -11,6 +11,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "cams3_params.h"
+#include "optical_flow.h"
 #include "web_page.h"
 
 static const char *TAG = "camera_stream";
@@ -137,6 +138,31 @@ static esp_err_t index_handler(httpd_req_t *req)
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     return httpd_resp_send(req, INDEX_HTML, strlen(INDEX_HTML));
+}
+
+// Handler: GET /api/status (Real-time telemetry and optical flow metrics)
+static esp_err_t api_status_get_handler(httpd_req_t *req)
+{
+    optical_flow_metrics_t metrics = {0};
+    optical_flow_get_latest(&metrics);
+
+    float z_est_en = 1.0f;
+    cams3_param_get("FLOW_Z_EST_EN", &z_est_en);
+
+    char resp[256];
+    snprintf(resp, sizeof(resp),
+             "{"status":"ok","distance_m":%.3f,"dx":%d,"dy":%d,"quality":%u,"fps":%.1f,"z_est_en":%d}",
+             metrics.distance_m,
+             metrics.dx,
+             metrics.dy,
+             metrics.quality,
+             metrics.fps,
+             (int)z_est_en);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+    return httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
 }
 
 // Handler: GET /api/params
@@ -352,6 +378,13 @@ esp_err_t camera_stream_start(void)
         .user_ctx  = NULL
     };
 
+    httpd_uri_t api_status_get_uri = {
+        .uri       = "/api/status",
+        .method    = HTTP_GET,
+        .handler   = api_status_get_handler,
+        .user_ctx  = NULL
+    };
+
     httpd_uri_t api_params_get_uri = {
         .uri       = "/api/params",
         .method    = HTTP_GET,
@@ -399,6 +432,7 @@ esp_err_t camera_stream_start(void)
         httpd_register_uri_handler(s_web_httpd, &index_uri);
         httpd_register_uri_handler(s_web_httpd, &capture_uri);
         httpd_register_uri_handler(s_web_httpd, &stream_redir_uri);
+        httpd_register_uri_handler(s_web_httpd, &api_status_get_uri);
         httpd_register_uri_handler(s_web_httpd, &api_params_get_uri);
         httpd_register_uri_handler(s_web_httpd, &api_param_set_uri);
         httpd_register_uri_handler(s_web_httpd, &api_param_get_set_uri);

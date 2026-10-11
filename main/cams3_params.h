@@ -4,7 +4,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "esp_err.h"
-#include <mavlink/v2.0/ardupilotmega/mavlink.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,6 +16,9 @@ extern "C" {
 #define MAV_COMP_ID_OPTICAL_FLOW 197
 #endif
 
+// Parameter data types
+#define CAMS3_PARAM_TYPE_REAL32 9
+
 /**
  * @brief CamS3 Parameter Definition Structure
  */
@@ -26,7 +28,7 @@ typedef struct {
     float    default_val;  // Factory default value
     float    min_val;      // Minimum allowed value
     float    max_val;      // Maximum allowed value
-    uint8_t  type;         // MAV_PARAM_TYPE (e.g. MAV_PARAM_TYPE_REAL32)
+    uint8_t  type;         // Parameter type (e.g. CAMS3_PARAM_TYPE_REAL32)
     bool     readonly;     // True if read-only
 } cams3_param_entry_t;
 
@@ -77,18 +79,6 @@ esp_err_t cams3_params_reset_defaults(void);
  * @return ESP_OK on success
  */
 esp_err_t cams3_params_save_all(void);
-
-/**
- * @brief Inspect and handle an incoming MAVLink stream buffer.
- * Processes PARAM_REQUEST_LIST, PARAM_REQUEST_READ, PARAM_SET,
- * and COMMAND_LONG (MAV_CMD_PREFLIGHT_STORAGE) targeted at CamS3 (compid 197).
- *
- * @param buf Raw MAVLink packet buffer
- * @param len Buffer length in bytes
- */
-void cams3_params_handle_mavlink_packet(const uint8_t *buf, uint16_t len);
-void cams3_params_handle_mavlink_packet_chan(const uint8_t *buf, uint16_t len, uint8_t chan);
-void cams3_params_handle_mavlink_msg(const mavlink_message_t *msg);
 
 /**
  * @brief Callback function type for parameter changes

@@ -220,10 +220,9 @@ static void uart_rx_task(void *pvParameters)
                 if (mavlink_parse_char(MAVLINK_COMM_0, rx_buf[i], &msg, &status)) {
                     route_action_t act = route_packet(&msg);
 
-                    // 1. Process locally on CamS3 if targeted to CamS3 or broadcast
-                    if (act.process_locally) {
-                        cams3_params_handle_mavlink_msg(&msg);
-                    }
+                    // 1. Process locally on CamS3 if targeted to CamS3
+                    // CamS3 parameters are managed exclusively via Web Console (Port 80 HTTP / REST API),
+                    // so no MAVLink parameter responses are emitted locally.
 
                     // 2. Forward to Wi-Fi (GCS) if NOT consumed exclusively by CamS3
                     //    Never loop back to UART!
@@ -304,10 +303,9 @@ static void udp_rx_task(void *pvParameters)
                 if (mavlink_parse_char(MAVLINK_COMM_1, rx_buf[i], &msg, &status)) {
                     route_action_t act = route_packet(&msg);
 
-                    // 1. Process locally on CamS3 if targeted to CamS3 or broadcast
-                    if (act.process_locally) {
-                        cams3_params_handle_mavlink_msg(&msg);
-                    }
+                    // 1. Process locally on CamS3 if targeted to CamS3
+                    // CamS3 parameters are managed exclusively via Web Console (Port 80 HTTP / REST API),
+                    // so no MAVLink parameter responses are emitted locally.
 
                     // 2. Forward to StampFly FC (UART) if NOT consumed exclusively by CamS3
                     //    Never loop back to Wi-Fi!
@@ -383,7 +381,8 @@ static void heartbeat_task(void *pvParameters)
         0, 0
     );
     uint16_t stat_len = mavlink_msg_to_send_buffer(stat_packet, &msg);
-    mavlink_router_send_internal(stat_packet, stat_len, MAV_ROUTE_DEST_ALL);
+    // Send debug status only to GCS (Wi-Fi UDP) - Never send debug messages to FC UART!
+    mavlink_router_send_internal(stat_packet, stat_len, MAV_ROUTE_DEST_GCS);
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000)); // Strict 1Hz interval
