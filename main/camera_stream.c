@@ -20,7 +20,8 @@ static const char *TAG = "camera_stream";
 
 static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
 
-static httpd_handle_t s_stream_httpd = NULL;
+static httpd_handle_t s_web_httpd = NULL;     // Port 80: Web Console & REST APIs
+static httpd_handle_t s_stream_httpd = NULL;  // Port 81: Dedicated MJPEG Video Stream
 
 // Lock-free Ping-Pong frame buffers in PSRAM
 static uint8_t *s_ping_pong_buf[2] = {NULL, NULL};
@@ -267,6 +268,15 @@ static esp_err_t api_options_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+// Handler: Redirect Port 80 /stream to Port 81 /stream
+static esp_err_t stream_redirect_handler(httpd_req_t *req)
+{
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1:81/stream");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    return httpd_resp_send(req, "Redirecting to stream on port 81...", HTTPD_RESP_USE_STRLEN);
+}
+
 esp_err_t camera_stream_start(void)
 {
     // Allocate double buffers in PSRAM
@@ -288,19 +298,14 @@ esp_err_t camera_stream_start(void)
         s_frame_ready_sem = xSemaphoreCreateBinary();
     }
 
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.server_port = CAMERA_STREAM_PORT;
-    config.ctrl_port = CAMERA_STREAM_PORT + 1000;
-    config.stack_size = 8192;
-    config.core_id = 0; // Run HTTP streaming on Core 0 alongside vision pipeline
-    config.uri_match_fn = httpd_uri_match_wildcard;
-
-    httpd_uri_t index_uri = {
-        .uri       = "/",
-        .method    = HTTP_GET,
-        .handler   = index_handler,
-        .user_ctx  = NULL
-    };
+    // 1. Dedicated MJPEG Video Stream Server (Port 81)
+    // Runs on an independent task/socket loop so streaming never blocks Web & REST APIs.
+    httpd_config_t stream_config = HTTPD_DEFAULT_CONFIG();
+    stream_config.server_port = CAMERA_STREAM_PORT;
+    stream_config.ctrl_port = CAMERA_STREAM_PORT + 1000;
+    stream_config.stack_size = 4096;
+    stream_config.core_id = 0;
+    stream_config.uri_match_fn = httpd_uri_match_wildcard;
 
     httpd_uri_t stream_uri = {
         .uri       = "/stream",
@@ -309,10 +314,41 @@ esp_err_t camera_stream_start(void)
         .user_ctx  = NULL
     };
 
+    ESP_LOGI(TAG, "Starting Dedicated MJPEG Stream Server on port %d...", stream_config.server_port);
+    if (httpd_start(&s_stream_httpd, &stream_config) == ESP_OK) {
+        httpd_register_uri_handler(s_stream_httpd, &stream_uri);
+        ESP_LOGI(TAG, "MJPEG Stream ready: http://192.168.4.1:%d/stream", CAMERA_STREAM_PORT);
+    } else {
+        ESP_LOGE(TAG, "Failed to start stream server on port %d!", CAMERA_STREAM_PORT);
+    }
+
+    // 2. Web Console & REST API Server (Port 80)
+    // Non-blocking, handles index HUD and parameters tuning instantly.
+    httpd_config_t web_config = HTTPD_DEFAULT_CONFIG();
+    web_config.server_port = CAMERA_WEB_PORT;
+    web_config.ctrl_port = CAMERA_WEB_PORT + 1000;
+    web_config.stack_size = 4096;
+    web_config.core_id = 0;
+    web_config.uri_match_fn = httpd_uri_match_wildcard;
+
+    httpd_uri_t index_uri = {
+        .uri       = "/",
+        .method    = HTTP_GET,
+        .handler   = index_handler,
+        .user_ctx  = NULL
+    };
+
     httpd_uri_t capture_uri = {
         .uri       = "/capture",
         .method    = HTTP_GET,
         .handler   = capture_handler,
+        .user_ctx  = NULL
+    };
+
+    httpd_uri_t stream_redir_uri = {
+        .uri       = "/stream",
+        .method    = HTTP_GET,
+        .handler   = stream_redirect_handler,
         .user_ctx  = NULL
     };
 
@@ -358,21 +394,21 @@ esp_err_t camera_stream_start(void)
         .user_ctx  = NULL
     };
 
-    ESP_LOGI(TAG, "Starting HTTP Console & Stream Server on port %d...", config.server_port);
-    if (httpd_start(&s_stream_httpd, &config) == ESP_OK) {
-        httpd_register_uri_handler(s_stream_httpd, &index_uri);
-        httpd_register_uri_handler(s_stream_httpd, &stream_uri);
-        httpd_register_uri_handler(s_stream_httpd, &capture_uri);
-        httpd_register_uri_handler(s_stream_httpd, &api_params_get_uri);
-        httpd_register_uri_handler(s_stream_httpd, &api_param_set_uri);
-        httpd_register_uri_handler(s_stream_httpd, &api_param_get_set_uri);
-        httpd_register_uri_handler(s_stream_httpd, &api_reset_uri);
-        httpd_register_uri_handler(s_stream_httpd, &api_reboot_uri);
-        httpd_register_uri_handler(s_stream_httpd, &api_options_uri);
+    ESP_LOGI(TAG, "Starting Web Console Server on port %d...", web_config.server_port);
+    if (httpd_start(&s_web_httpd, &web_config) == ESP_OK) {
+        httpd_register_uri_handler(s_web_httpd, &index_uri);
+        httpd_register_uri_handler(s_web_httpd, &capture_uri);
+        httpd_register_uri_handler(s_web_httpd, &stream_redir_uri);
+        httpd_register_uri_handler(s_web_httpd, &api_params_get_uri);
+        httpd_register_uri_handler(s_web_httpd, &api_param_set_uri);
+        httpd_register_uri_handler(s_web_httpd, &api_param_get_set_uri);
+        httpd_register_uri_handler(s_web_httpd, &api_reset_uri);
+        httpd_register_uri_handler(s_web_httpd, &api_reboot_uri);
+        httpd_register_uri_handler(s_web_httpd, &api_options_uri);
         ESP_LOGI(TAG, "Web Console ready: http://192.168.4.1/ (API: /api/params, /api/param)");
         return ESP_OK;
     }
 
-    ESP_LOGE(TAG, "Failed to start HTTP server!");
+    ESP_LOGE(TAG, "Failed to start Web Console server on port %d!", CAMERA_WEB_PORT);
     return ESP_FAIL;
 }
