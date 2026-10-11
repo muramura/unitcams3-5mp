@@ -543,6 +543,7 @@ static const char INDEX_HTML[] =
     "  'FLOW_Z_DEF':    { cat: 'alt', label: 'Default Height (m)', desc: 'Fallback hover height if sensor unavailable', step: 0.05 },\n"
     "  'LAND_TGT_EN':   { cat: 'alt', label: 'Precision Landing', desc: 'Detect ArUco / landing markers', type: 'toggle' },\n"
     "  'LAND_RATE_HZ':  { cat: 'alt', label: 'Marker Rate (Hz)', desc: 'Precision landing detector frequency', step: 1 },\n"
+    "  'MARK_SIZE_MM':  { cat: 'alt', label: 'Marker Size (mm)', desc: 'Physical size of landing marker for 3D distance', step: 5 },\n"
     "  'OSD_ENABLE':    { cat: 'alt', label: 'Video OSD Overlay', desc: 'Draw optical flow vectors on video stream', type: 'toggle' }\n"
     "};\n"
     "\n"
