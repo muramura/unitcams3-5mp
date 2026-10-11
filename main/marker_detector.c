@@ -59,6 +59,156 @@ static void euler_to_quaternion(float roll, float pitch, float yaw, float q[4])
 /**
  * @brief Robust ArUco / landing marker detector with 6-DOF pose & orientation calculation
  */
+
+// =========================================================================
+// ArUco 4x4 (DICT_4X4_50) Decoding & Orientation Matching
+// =========================================================================
+
+static const uint16_t s_aruco_4x4_50[50] = {
+    0xb532, 0x0f9a, 0x332d, 0x9946, 0x549e,
+    0x79cd, 0x9e2e, 0xc4f2, 0xfeda, 0xcf56,
+    0xf991, 0x11a7, 0x0eb7, 0x2a0f, 0x24b1,
+    0x263e, 0x4665, 0x6600, 0x6c5e, 0x76af,
+    0x868b, 0xb02b, 0xccd5, 0xdd82, 0xfe47,
+    0x9471, 0xace4, 0xa554, 0x2123, 0x346f,
+    0x4415, 0x57b2, 0x9ecf, 0xf0cb, 0x08ae,
+    0x0929, 0x1875, 0x04ff, 0x0df6, 0x1c5a,
+    0x1718, 0x2a28, 0x328c, 0x38b2, 0x24e8,
+    0x2eeb, 0x2d3f, 0x4b64, 0x502e, 0x5013,
+};
+
+static inline uint16_t rotate_code_90(uint16_t c)
+{
+    uint16_t rot = 0;
+    for (int r = 0; r < 4; r++) {
+        for (int col = 0; col < 4; col++) {
+            int src_bit = 15 - (r * 4 + col);
+            if ((c >> src_bit) & 1) {
+                int dst_r = col;
+                int dst_c = 3 - r;
+                int dst_bit = 15 - (dst_r * 4 + dst_c);
+                rot |= (1 << dst_bit);
+            }
+        }
+    }
+    return rot;
+}
+
+static inline uint8_t sample_cell(uint16_t w, uint16_t h, const uint8_t *buf, float px, float py)
+{
+    int ix = (int)roundf(px);
+    int iy = (int)roundf(py);
+    if (ix < 1 || ix >= w - 1 || iy < 1 || iy >= h - 1) {
+        if (ix >= 0 && ix < w && iy >= 0 && iy < h) {
+            return buf[iy * w + ix];
+        }
+        return 0;
+    }
+    int sum = (int)buf[iy * w + ix] * 2 +
+              (int)buf[iy * w + (ix - 1)] +
+              (int)buf[iy * w + (ix + 1)] +
+              (int)buf[(iy - 1) * w + ix] +
+              (int)buf[(iy + 1) * w + ix];
+    return (uint8_t)(sum / 6);
+}
+
+static bool aruco_decode_4x4(uint16_t w, uint16_t h, const uint8_t *buf,
+                             const float corners_x[4], const float corners_y[4],
+                             uint8_t *out_id, int *out_rot_img)
+{
+    uint8_t min_inner = 255;
+    uint8_t max_inner = 0;
+    uint8_t cell_vals[6][6];
+
+    for (int r = 0; r < 6; r++) {
+        float v = ((float)r + 0.5f) / 6.0f;
+        for (int c = 0; c < 6; c++) {
+            float u = ((float)c + 0.5f) / 6.0f;
+
+            float px = (1.0f - u) * (1.0f - v) * corners_x[0] +
+                       u * (1.0f - v) * corners_x[1] +
+                       u * v * corners_x[2] +
+                       (1.0f - u) * v * corners_x[3];
+            float py = (1.0f - u) * (1.0f - v) * corners_y[0] +
+                       u * (1.0f - v) * corners_y[1] +
+                       u * v * corners_y[2] +
+                       (1.0f - u) * v * corners_y[3];
+
+            uint8_t val = sample_cell(w, h, buf, px, py);
+            cell_vals[r][c] = val;
+
+            if (r >= 1 && r <= 4 && c >= 1 && c <= 4) {
+                if (val < min_inner) min_inner = val;
+                if (val > max_inner) max_inner = val;
+            }
+        }
+    }
+
+    if ((max_inner - min_inner) < 20) {
+        return false;
+    }
+
+    uint8_t local_thresh = (uint8_t)((min_inner + max_inner) / 2);
+
+    // Border Check: outer 20 cells must be mostly dark
+    int border_bright = 0;
+    for (int r = 0; r < 6; r++) {
+        for (int c = 0; c < 6; c++) {
+            if (r == 0 || r == 5 || c == 0 || c == 5) {
+                if (cell_vals[r][c] > local_thresh) {
+                    border_bright++;
+                }
+            }
+        }
+    }
+    if (border_bright > 5) {
+        return false;
+    }
+
+    // Extract 16-bit code from inner 4x4
+    uint16_t cand_code = 0;
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) {
+            uint8_t val = cell_vals[r + 1][c + 1];
+            if (val >= local_thresh) {
+                int bit = 15 - (r * 4 + c);
+                cand_code |= (1 << bit);
+            }
+        }
+    }
+
+    // Generate 4 candidate rotations
+    uint16_t rots[4];
+    rots[0] = cand_code;
+    rots[1] = rotate_code_90(rots[0]);
+    rots[2] = rotate_code_90(rots[1]);
+    rots[3] = rotate_code_90(rots[2]);
+
+    int best_id = -1;
+    int best_dist = 99;
+    int best_rot_k = 0;
+
+    for (int i = 0; i < 50; i++) {
+        uint16_t ref = s_aruco_4x4_50[i];
+        for (int rot_k = 0; rot_k < 4; rot_k++) {
+            int dist = __builtin_popcount(rots[rot_k] ^ ref);
+            if (dist < best_dist) {
+                best_dist = dist;
+                best_id = i;
+                best_rot_k = rot_k;
+            }
+        }
+    }
+
+    if (best_dist <= 1 && best_id >= 0) {
+        *out_id = (uint8_t)best_id;
+        *out_rot_img = (4 - best_rot_k) % 4;
+        return true;
+    }
+
+    return false;
+}
+
 bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float marker_size_m, marker_target_t *result)
 {
     if (!buf || !result || w < 32 || h < 32) {
@@ -322,7 +472,7 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
         corners_x[3] = (float)min_x; corners_y[3] = (float)max_y; // Bottom-Left
     }
 
-    // 5. Order corners: P0=Top-Left, P1=Top-Right, P2=Bottom-Right, P3=Bottom-Left
+    // 5. Order corners coarsely: P0=Top-Left, P1=Top-Right, P2=Bottom-Right, P3=Bottom-Left
     int top_left_idx = 0;
     float min_dist_origin = 1e9f;
     for (int i = 0; i < 4; i++) {
@@ -340,12 +490,29 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
         sorted_y[i] = corners_y[(top_left_idx + i) % 4];
     }
 
+    // 6. Decode ArUco 4x4 (DICT_4X4_50) and align orientation
+    uint8_t marker_id = 0;
+    int rot_img = 0;
+    if (!aruco_decode_4x4(w, h, buf, sorted_x, sorted_y, &marker_id, &rot_img)) {
+        return false; // Reject false positives not matching ArUco 4x4 dictionary
+    }
+
+    // Reorder corners so that P0 is the true physical Top-Left of the ArUco marker
+    float oriented_x[4];
+    float oriented_y[4];
+    for (int i = 0; i < 4; i++) {
+        oriented_x[i] = sorted_x[(rot_img + i) % 4];
+        oriented_y[i] = sorted_y[(rot_img + i) % 4];
+    }
+    memcpy(sorted_x, oriented_x, sizeof(sorted_x));
+    memcpy(sorted_y, oriented_y, sizeof(sorted_y));
+
     for (int i = 0; i < 4; i++) {
         result->corners_x[i] = (int)roundf(sorted_x[i]);
         result->corners_y[i] = (int)roundf(sorted_y[i]);
     }
 
-    // 6. Geometry & Orientation Calculation
+    // 7. Geometry & Orientation Calculation
     float cx = (sorted_x[0] + sorted_x[1] + sorted_x[2] + sorted_x[3]) * 0.25f;
     float cy = (sorted_y[0] + sorted_y[1] + sorted_y[2] + sorted_y[3]) * 0.25f;
 
@@ -394,7 +561,7 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
 
     // 8. Populate result
     result->detected = true;
-    result->id = 0;
+    result->id = marker_id;
     result->cx = cx;
     result->cy = cy;
     result->width = (len_top + len_bot) * 0.5f;

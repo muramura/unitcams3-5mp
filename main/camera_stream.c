@@ -156,7 +156,7 @@ static esp_err_t api_status_get_handler(httpd_req_t *req)
     char resp[512];
     snprintf(resp, sizeof(resp),
              "{\"status\":\"ok\",\"distance_m\":%.3f,\"dx\":%d,\"dy\":%d,\"quality\":%u,\"fps\":%.1f,\"z_est_en\":%d,"
-             "\"tgt_det\":%d,\"tgt_yaw\":%.1f,\"tgt_x\":%.2f,\"tgt_y\":%.2f,\"tgt_z\":%.2f,\"tgt_dist\":%.2f,"
+             "\"tgt_det\":%d,\"tgt_id\":%u,\"tgt_yaw\":%.1f,\"tgt_x\":%.2f,\"tgt_y\":%.2f,\"tgt_z\":%.2f,\"tgt_dist\":%.2f,"
              "\"corners_x\":[%d,%d,%d,%d],\"corners_y\":[%d,%d,%d,%d]}",
              metrics.distance_m,
              metrics.dx,
@@ -165,6 +165,7 @@ static esp_err_t api_status_get_handler(httpd_req_t *req)
              metrics.fps,
              (int)z_est_en,
              target.detected ? 1 : 0,
+             target.id,
              target.yaw_deg,
              target.pos_x,
              target.pos_y,
