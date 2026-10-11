@@ -13,6 +13,7 @@
 #include "cams3_params.h"
 #include "optical_flow.h"
 #include "web_page.h"
+#include "vision_pipeline.h"
 
 static const char *TAG = "camera_stream";
 
@@ -140,23 +141,33 @@ static esp_err_t index_handler(httpd_req_t *req)
     return httpd_resp_send(req, INDEX_HTML, strlen(INDEX_HTML));
 }
 
-// Handler: GET /api/status (Real-time telemetry and optical flow metrics)
+// Handler: GET /api/status (Real-time telemetry, optical flow & landing target metrics)
 static esp_err_t api_status_get_handler(httpd_req_t *req)
 {
     optical_flow_metrics_t metrics = {0};
     optical_flow_get_latest(&metrics);
 
+    vision_pipeline_status_t v_status = {0};
+    vision_pipeline_get_status(&v_status);
+
     float z_est_en = cams3_param_get("FLOW_Z_EST_EN");
 
-    char resp[256];
+    char resp[384];
     snprintf(resp, sizeof(resp),
-             "{\"status\":\"ok\",\"distance_m\":%.3f,\"dx\":%d,\"dy\":%d,\"quality\":%u,\"fps\":%.1f,\"z_est_en\":%d}",
+             "{\"status\":\"ok\",\"distance_m\":%.3f,\"dx\":%d,\"dy\":%d,\"quality\":%u,\"fps\":%.1f,\"z_est_en\":%d,"
+             "\"tgt_det\":%d,\"tgt_yaw\":%.1f,\"tgt_x\":%.2f,\"tgt_y\":%.2f,\"tgt_z\":%.2f,\"tgt_dist\":%.2f}",
              metrics.distance_m,
              metrics.dx,
              metrics.dy,
              metrics.quality,
              metrics.fps,
-             (int)z_est_en);
+             (int)z_est_en,
+             v_status.target.detected ? 1 : 0,
+             v_status.target.yaw_deg,
+             v_status.target.pos_x,
+             v_status.target.pos_y,
+             v_status.target.pos_z,
+             v_status.target.distance);
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");

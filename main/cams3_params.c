@@ -29,6 +29,7 @@ static cams3_param_entry_t s_params[] = {
     { "LAND_TGT_EN",    1.0f,   1.0f,  0.0f,   1.0f,   CAMS3_PARAM_TYPE_REAL32, false }, // Marker Landing Detector Enable
     { "LAND_RATE_HZ",   6.0f,   6.0f,  1.0f,   20.0f,  CAMS3_PARAM_TYPE_REAL32, false }, // Marker Detection Rate
     { "OSD_ENABLE",     1.0f,   1.0f,  0.0f,   1.0f,   CAMS3_PARAM_TYPE_REAL32, false }, // Video Stream Overlay
+    { "MARK_SIZE_MM",  50.0f,  50.0f, 10.0f,  500.0f, CAMS3_PARAM_TYPE_REAL32, false }, // Marker Physical Size (mm)
 };
 
 #define PARAM_COUNT (sizeof(s_params) / sizeof(s_params[0]))

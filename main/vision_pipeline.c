@@ -105,24 +105,32 @@ static void vision_dispatcher_task(void *pvParameters)
             decimation_counter++;
             if (decimation_counter >= 5) {
                 decimation_counter = 0;
-                if (marker_detector_process(w, h, fb_curr->buf, &target)) {
-                    // Send MAVLink #149 LANDING_TARGET via Dual-Queue Router
+                float mark_size_m = cams3_param_get("MARK_SIZE_MM") * 0.001f;
+                if (mark_size_m <= 0.001f) {
+                    mark_size_m = 0.05f; // Default 50mm
+                }
+
+                if (marker_detector_process(w, h, fb_curr->buf, mark_size_m, &target)) {
+                    // Send MAVLink #149 LANDING_TARGET with 6-DOF Orientation Quaternion to ArduPilot
+                    // ArduPilot AC_PrecLand requires MAV_FRAME_BODY_FRD and valid position & quaternion
                     mavlink_message_t lt_msg;
                     mavlink_msg_landing_target_pack(
                         1, MAV_COMP_ID_OPTICAL_FLOW,
                         &lt_msg,
                         (uint64_t)now_us,
                         target.id,
-                        MAV_FRAME_BODY_NED,
+                        MAV_FRAME_BODY_FRD, // ArduPilot requires BODY_FRD
                         target.angle_x,
                         target.angle_y,
                         target.distance,
                         (target.width / (float)w),
                         (target.height / (float)h),
-                        0, 0, 0,
-                        NULL,
-                        LANDING_TARGET_TYPE_VISION_OTHER,
-                        1
+                        target.pos_x,
+                        target.pos_y,
+                        target.pos_z,
+                        target.q, // 6-DOF Quaternion [w, x, y, z]
+                        LANDING_TARGET_TYPE_VISION_FIDUCIAL,
+                        1 // position_valid = 1
                     );
                     uint16_t lt_len = mavlink_msg_to_send_buffer(mav_packet, &lt_msg);
                     mavlink_router_send_internal(mav_packet, lt_len, MAV_ROUTE_DEST_ALL);
@@ -172,11 +180,18 @@ static void vision_dispatcher_task(void *pvParameters)
                     int fy = cy + flow_metrics.dy * 3;
                     draw_line(s_overlay_buf, w, h, cx, cy, fx, fy, 255);
 
-                    // Draw Landing Target bounding box if detected
+                    // Draw Landing Target polygon & heading indicator if detected
                     if (target.detected) {
-                        draw_rect(s_overlay_buf, w, h,
-                                  target.corners_x[0], target.corners_y[0],
-                                  target.corners_x[2], target.corners_y[2], 255);
+                        // Draw 4 edges of oriented marker polygon
+                        draw_line(s_overlay_buf, w, h, target.corners_x[0], target.corners_y[0], target.corners_x[1], target.corners_y[1], 255);
+                        draw_line(s_overlay_buf, w, h, target.corners_x[1], target.corners_y[1], target.corners_x[2], target.corners_y[2], 255);
+                        draw_line(s_overlay_buf, w, h, target.corners_x[2], target.corners_y[2], target.corners_x[3], target.corners_y[3], 255);
+                        draw_line(s_overlay_buf, w, h, target.corners_x[3], target.corners_y[3], target.corners_x[0], target.corners_y[0], 255);
+
+                        // Draw heading indicator line from center to top edge midpoint
+                        int top_mid_x = (target.corners_x[0] + target.corners_x[1]) / 2;
+                        int top_mid_y = (target.corners_y[0] + target.corners_y[1]) / 2;
+                        draw_line(s_overlay_buf, w, h, (int)target.cx, (int)target.cy, top_mid_x, top_mid_y, 255);
                     }
                 }
             }
@@ -193,9 +208,10 @@ static void vision_dispatcher_task(void *pvParameters)
         if (now_us - last_stats_us >= 5000000) {
             float fps = (float)frame_count * 1000000.0f / (float)(now_us - last_stats_us);
             s_status.pipeline_fps = fps;
-            ESP_LOGI(TAG, "Vision Pipeline Active: %.1f FPS | Flow: dx=%d, dy=%d (Q=%u) | Target: %s (ID=%u, dist=%.2fm)",
+            ESP_LOGI(TAG, "Vision Pipeline Active: %.1f FPS | Flow: dx=%d, dy=%d (Q=%u) | Target: %s (ID=%u, pos=[%.2f, %.2f, %.2f]m, Yaw=%.1f deg)",
                      fps, flow_metrics.dx, flow_metrics.dy, flow_metrics.quality,
-                     target.detected ? "FOUND" : "NONE", target.id, target.distance);
+                     target.detected ? "FOUND" : "NONE", target.id,
+                     target.pos_x, target.pos_y, target.pos_z, target.yaw_deg);
             frame_count = 0;
             last_stats_us = now_us;
         }
