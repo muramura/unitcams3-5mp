@@ -53,8 +53,6 @@ static vehicle_telemetry_t s_vehicle_telem = {0};
 
 static float s_estimated_distance = 0.30f; // Default 30cm hover distance
 static float s_last_divergence = 0.0f;
-static float s_last_baro_alt = 0.0f;
-static bool s_has_initial_baro = false;
 
 // ARPS algorithm helper buffers
 static bool s_bm_done[2 * BM_PMAX + 1][2 * BM_PMAX + 1];
