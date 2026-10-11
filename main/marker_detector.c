@@ -3,6 +3,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/portmacro.h"
 
 static const char *TAG = "marker_detector";
 
@@ -413,4 +415,26 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
     result->q[3] = q[3];
 
     return true;
+}
+
+static portMUX_TYPE s_target_lock = portMUX_INITIALIZER_UNLOCKED;
+static marker_target_t s_latest_target = {0};
+
+void marker_detector_update(const marker_target_t *target)
+{
+    portENTER_CRITICAL(&s_target_lock);
+    if (target) {
+        s_latest_target = *target;
+    } else {
+        s_latest_target.detected = false;
+    }
+    portEXIT_CRITICAL(&s_target_lock);
+}
+
+void marker_detector_get_latest(marker_target_t *out)
+{
+    if (!out) return;
+    portENTER_CRITICAL(&s_target_lock);
+    *out = s_latest_target;
+    portEXIT_CRITICAL(&s_target_lock);
 }

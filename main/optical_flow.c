@@ -14,6 +14,7 @@
 #include "jpeg_decoder.h"
 #include "cams3_params.h"
 #include "camera_stream.h"
+#include "marker_detector.h"
 
 static const char *TAG = "optical_flow";
 
@@ -340,6 +341,53 @@ static void optical_flow_cam_task(void *pvParameters)
             portEXIT_CRITICAL(&s_flow_lock);
         }
 
+        // -------------------------------------------------------------
+        // Precision Landing Marker Detection (ArUco / Fiducial)
+        // Decimated to run ~6Hz (every 5 frames) to minimize CPU impact
+        // -------------------------------------------------------------
+        static uint8_t s_marker_decim = 0;
+        if (cams3_param_get_int("LAND_TGT_EN") > 0) {
+            s_marker_decim++;
+            if (s_marker_decim >= 5) {
+                s_marker_decim = 0;
+                float mark_size_m = cams3_param_get("MARK_SIZE_MM") * 0.001f;
+                if (mark_size_m <= 0.001f) {
+                    mark_size_m = 0.05f; // Default 50mm (0.05m)
+                }
+
+                marker_target_t target = {0};
+                if (marker_detector_process(BM_WIDTH, BM_HEIGHT, s_curr_gray, mark_size_m, &target)) {
+                    marker_detector_update(&target);
+
+                    // Send MAVLink #149 LANDING_TARGET with 6-DOF Orientation Quaternion to ArduPilot & GCS
+                    mavlink_message_t lt_msg;
+                    uint8_t lt_packet[MAVLINK_MAX_PACKET_LEN];
+                    mavlink_msg_landing_target_pack(
+                        1, MAV_COMP_ID_OPTICAL_FLOW,
+                        &lt_msg,
+                        (uint64_t)now_us,
+                        target.id,
+                        MAV_FRAME_BODY_FRD, // ArduPilot requires BODY_FRD
+                        target.angle_x,
+                        target.angle_y,
+                        target.distance,
+                        (target.width / (float)BM_WIDTH),
+                        (target.height / (float)BM_HEIGHT),
+                        target.pos_x,
+                        target.pos_y,
+                        target.pos_z,
+                        target.q, // 6-DOF Quaternion [w, x, y, z]
+                        LANDING_TARGET_TYPE_VISION_FIDUCIAL,
+                        1 // position_valid = 1
+                    );
+                    uint16_t lt_len = mavlink_msg_to_send_buffer(lt_packet, &lt_msg);
+                    mavlink_router_send_internal(lt_packet, lt_len, MAV_ROUTE_DEST_ALL);
+                } else {
+                    marker_detector_update(NULL);
+                }
+            }
+        }
+
         // Copy current to prev for next comparison
         memcpy(s_prev_gray, s_curr_gray, BM_WIDTH * BM_HEIGHT);
         s_has_prev_frame = true;
@@ -521,6 +569,9 @@ esp_err_t optical_flow_init(void)
         ESP_LOGI(TAG, "PY260 Camera successfully initialized! (PID: 0x%04x, VFLIP=%d, HMIRROR=%d)",
                  s->id.PID, (int)cams3_param_get_int("CAM_VFLIP"), (int)cams3_param_get_int("CAM_HMIRROR"));
     }
+
+        // Initialize Marker Detector with CamS3 FOV (66.5 deg H, 52.0 deg V)
+    marker_detector_init(66.5f, 52.0f);
 
     s_camera_ready = true;
     return ESP_OK;

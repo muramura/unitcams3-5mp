@@ -55,6 +55,16 @@ void marker_detector_init(float fov_h_deg, float fov_v_deg);
  */
 bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float marker_size_m, marker_target_t *result);
 
+/**
+ * @brief Update latest detection result in thread-safe storage (called by vision loop)
+ */
+void marker_detector_update(const marker_target_t *target);
+
+/**
+ * @brief Get copy of latest detection result (thread-safe, called by web / telemetry)
+ */
+void marker_detector_get_latest(marker_target_t *out);
+
 #ifdef __cplusplus
 }
 #endif
