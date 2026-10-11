@@ -291,48 +291,40 @@ static void optical_flow_cam_task(void *pvParameters)
             telem = s_vehicle_telem;
             portEXIT_CRITICAL(&s_telem_lock);
 
-            // Optical Flow Height / Distance Estimator
+            // Optical Flow Monocular Height / Distance Estimator
+            // NOTE: Never use RangeFinder altitude (VL53L3CX 5cm drop hazard).
+            // Uses FC Barometric / EKF Altitude during flight, and pure visual divergence during hand-held testing.
             if (cams3_param_get_int("FLOW_Z_EST_EN") > 0) {
-                float z_meas = -1.0f;
+                float default_z = cams3_param_get("FLOW_Z_DEF");
+                if (default_z < 0.05f) default_z = 0.30f;
 
-                // Method A: Vertical velocity (climb rate) & Divergence
-                // Active when descending (climb < -0.04m/s, expansion div_avg > 0)
-                // or ascending (climb > +0.04m/s, contraction div_avg < 0)
-                if (fabsf(telem.vz_climb) > 0.04f && fabsf(div_avg) > 0.005f) {
+                // Priority 1: FC Barometric / EKF Altitude (Flight Mode)
+                // If FC provides valid positive baro/relative altitude (> 0.08m)
+                if (telem.has_telem && telem.baro_alt > 0.08f) {
+                    s_estimated_distance = 0.90f * s_estimated_distance + 0.10f * telem.baro_alt;
+                }
+                // Priority 2: In-Flight Vertical Velocity & Divergence scaling
+                else if (fabsf(telem.vz_climb) > 0.04f && fabsf(div_avg) > 0.005f) {
                     float div_rate = div_avg / dt_sec; // [1/s]
                     if ((telem.vz_climb < 0.0f && div_rate > 0.0f) ||
                         (telem.vz_climb > 0.0f && div_rate < 0.0f)) {
-                        z_meas = fabsf(telem.vz_climb) / fabsf(div_rate);
-                    }
-                }
-
-                // Method B: Horizontal velocity & Angular Optical Flow Rate
-                if (z_meas < 0.0f) {
-                    float v_horiz = sqrtf(telem.vx * telem.vx + telem.vy * telem.vy);
-                    if (v_horiz > 0.08f) {
-                        float fx = 125.6f; // Focal length in pixels @ 160x120 (~65 deg FOV)
-                        float flow_rate_x = (float)trans_dx / (fx * dt_sec);
-                        float flow_rate_y = (float)trans_dy / (fx * dt_sec);
-                        float flow_speed = sqrtf(flow_rate_x * flow_rate_x + flow_rate_y * flow_rate_y);
-                        if (flow_speed > 0.10f) {
-                            z_meas = v_horiz / flow_speed;
+                        float z_meas = fabsf(telem.vz_climb) / fabsf(div_rate);
+                        if (z_meas >= 0.05f && z_meas <= 3.50f) {
+                            s_estimated_distance = 0.85f * s_estimated_distance + 0.15f * z_meas;
                         }
                     }
                 }
-
-                // Fusion with Low-Pass Filter
-                if (z_meas >= 0.05f && z_meas <= 3.50f) {
-                    s_estimated_distance = 0.85f * s_estimated_distance + 0.15f * z_meas;
-                } else if (telem.has_telem) {
-                    // Method C: Relative barometric tracking during hover/stationary state
-                    if (!s_has_initial_baro) {
-                        s_last_baro_alt = telem.baro_alt;
-                        s_has_initial_baro = true;
-                    } else {
-                        float d_baro = telem.baro_alt - s_last_baro_alt;
-                        s_last_baro_alt = telem.baro_alt;
-                        s_estimated_distance += d_baro;
-                    }
+                // Priority 3: Monocular Visual Divergence Tracking (Hand-held / Hover test mode)
+                // Approach target (div_avg > 0: image expanding) -> distance decreases
+                // Move away from target (div_avg < 0: image shrinking) -> distance increases
+                else if (q >= 15 && fabsf(div_avg) > 0.003f) {
+                    // dZ = - Z * div_avg * gain (sensitivity gain ~ 2.0)
+                    float dz = - s_estimated_distance * div_avg * 2.0f;
+                    s_estimated_distance += dz;
+                }
+                // Priority 4: Stationary - gentle stabilization toward default hover height
+                else {
+                    s_estimated_distance = 0.995f * s_estimated_distance + 0.005f * default_z;
                 }
 
                 // Safety clamp: 5cm to 3.5m
