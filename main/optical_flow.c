@@ -13,6 +13,7 @@
 #include <mavlink/v2.0/ardupilotmega/mavlink.h>
 #include "jpeg_decoder.h"
 #include "cams3_params.h"
+#include "camera_stream.h"
 
 static const char *TAG = "optical_flow";
 
@@ -199,6 +200,11 @@ static void optical_flow_cam_task(void *pvParameters)
         if (!fb_curr) {
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
+        }
+
+        // Push raw JPEG frame to Web/MJPEG streaming buffer on-demand
+        if (camera_stream_has_client()) {
+            camera_stream_push_frame(fb_curr->buf, fb_curr->len);
         }
 
         // Fast hardware/DSP JPEG decode: VGA (640x480) -> 1/4 scale (160x120 RGB565)
