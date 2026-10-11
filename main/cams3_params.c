@@ -425,7 +425,7 @@ esp_err_t cams3_params_to_json(char *buf, size_t max_len)
 
     for (size_t i = 0; i < PARAM_COUNT; i++) {
         written = snprintf(buf + offset, max_len - offset,
-                           "%s{"name":"%s","val":%.4f,"def":%.4f,"min":%.4f,"max":%.4f,"ro":%d}",
+                           "%s{\"name\":\"%s\",\"val\":%.4f,\"def\":%.4f,\"min\":%.4f,\"max\":%.4f,\"ro\":%d}",
                            (i > 0) ? "," : "",
                            s_params[i].name,
                            s_params[i].value,
