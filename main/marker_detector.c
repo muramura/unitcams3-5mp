@@ -11,25 +11,22 @@ static float s_fy = 120.0f; // Focal length in pixels (Y)
 static float s_cx0 = 80.0f; // Optical center X
 static float s_cy0 = 60.0f; // Optical center Y
 
-#define RAY_COUNT 36 // 36 rays = 10-degree angular resolution
-
 void marker_detector_init(float fov_h_deg, float fov_v_deg)
 {
-    float fov_h_rad = fov_h_deg * ((float)M_PI / 180.0f);
-    float fov_v_rad = fov_v_deg * ((float)M_PI / 180.0f);
+    float fov_h_rad = fov_h_deg * (M_PI / 180.0f);
+    float fov_v_rad = fov_v_deg * (M_PI / 180.0f);
 
-    // Default assume 160x120 resolution
     s_cx0 = 160.0f / 2.0f;
     s_cy0 = 120.0f / 2.0f;
     s_fx = s_cx0 / tanf(fov_h_rad / 2.0f);
     s_fy = s_cy0 / tanf(fov_v_rad / 2.0f);
 
-    ESP_LOGI(TAG, "Marker detector 6-DOF initialized: fx=%.1f, fy=%.1f, cx0=%.1f, cy0=%.1f",
+    ESP_LOGI(TAG, "Marker detector initialized: fx=%.1f, fy=%.1f, cx0=%.1f, cy0=%.1f",
              s_fx, s_fy, s_cx0, s_cy0);
 }
 
 /**
- * @brief Convert Euler angles (roll, pitch, yaw in radians) to normalized quaternion [w, x, y, z]
+ * @brief Helper: Convert Euler angles (roll, pitch, yaw in radians) to normalized quaternion [w, x, y, z]
  */
 static void euler_to_quaternion(float roll, float pitch, float yaw, float q[4])
 {
@@ -45,7 +42,6 @@ static void euler_to_quaternion(float roll, float pitch, float yaw, float q[4])
     q[2] = cr * sp * cy + sr * cp * sy; // y
     q[3] = cr * cp * sy - sr * sp * cy; // z
 
-    // Normalize
     float norm = sqrtf(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
     if (norm > 1e-6f) {
         float inv = 1.0f / norm;
@@ -59,7 +55,7 @@ static void euler_to_quaternion(float roll, float pitch, float yaw, float q[4])
 }
 
 /**
- * @brief Fast fiducial marker detector with 6-DOF pose & orientation calculation
+ * @brief Robust ArUco / landing marker detector with 6-DOF pose & orientation calculation
  */
 bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float marker_size_m, marker_target_t *result)
 {
@@ -73,20 +69,16 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
         marker_size_m = 0.05f; // Default 50mm (0.05m)
     }
 
-    // 1. Calculate fast scene brightness range (sample every 4th pixel)
-    uint32_t sum = 0;
+    // 1. Calculate dynamic scene brightness range
     uint8_t min_v = 255;
     uint8_t max_v = 0;
-    int samples = 0;
 
     for (int y = 4; y < h - 4; y += 4) {
         int row = y * w;
         for (int x = 4; x < w - 4; x += 4) {
             uint8_t v = buf[row + x];
-            sum += v;
             if (v < min_v) min_v = v;
             if (v > max_v) max_v = v;
-            samples++;
         }
     }
 
@@ -97,27 +89,27 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
 
     uint8_t thresh = (uint8_t)((min_v + max_v) / 2);
 
-    // 2. Coarse Candidate Search: Multi-slice Horizontal Span Analysis
-    // ArUco markers have distinct dark outer borders (left and right on scanlines)
-    // with quiet zone (white/bright) outside and arbitrary bit patterns inside.
+    // 2. Candidate Row Scanning
+    // An ArUco marker has a distinct dark bounding region surrounded by a bright quiet zone.
+    // We ignore segments that touch image borders (which are typically desk or background darkness).
+    #define MAX_ROW_CANDS 64
     typedef struct {
         int y;
-        int cx;
+        int left;
+        int right;
         int w;
-    } span_cand_t;
+    } row_cand_t;
 
-    #define MAX_CANDS 32
-    span_cand_t cands[MAX_CANDS];
+    row_cand_t row_cands[MAX_ROW_CANDS];
     int cand_count = 0;
 
     int min_size = 14;
     int max_size = (int)(w * 0.85f);
-    int step_y = 3;
+    int step_y = 2;
 
     for (int y = min_size / 2; y < h - min_size / 2; y += step_y) {
         int row = y * w;
         
-        // Find dark segments on this row
         int seg_starts[16];
         int seg_ends[16];
         int seg_count = 0;
@@ -144,84 +136,72 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
             seg_count++;
         }
 
-        // Test if segments form an ArUco outer border cross-section
-        if (seg_count >= 2) {
-            // Left border is first segment, right border is last segment
-            int left_start = seg_starts[0];
-            int left_end = seg_ends[0];
-            int right_start = seg_starts[seg_count - 1];
-            int right_end = seg_ends[seg_count - 1];
-
-            int span_w = right_end - left_start;
-            int t_left = left_end - left_start + 1;
-            int t_right = right_end - right_start + 1;
-
-            if (span_w >= min_size && span_w <= max_size &&
-                t_left >= 1 && t_right >= 1 &&
-                t_left < span_w / 2 && t_right < span_w / 2) {
-                
-                if (cand_count < MAX_CANDS) {
-                    cands[cand_count].y = y;
-                    cands[cand_count].cx = (left_start + right_end) / 2;
-                    cands[cand_count].w = span_w;
-                    cand_count++;
-                }
+        // Filter: Keep only dark segments that do NOT touch screen boundaries
+        int valid_starts[16];
+        int valid_ends[16];
+        int valid_count = 0;
+        for (int i = 0; i < seg_count; i++) {
+            if (seg_starts[i] > 3 && seg_ends[i] < w - 4) {
+                valid_starts[valid_count] = seg_starts[i];
+                valid_ends[valid_count] = seg_ends[i];
+                valid_count++;
             }
-        } else if (seg_count == 1) {
-            // Could be top or bottom solid border
-            int span_w = seg_ends[0] - seg_starts[0];
-            if (span_w >= min_size && span_w <= max_size) {
-                if (cand_count < MAX_CANDS) {
-                    cands[cand_count].y = y;
-                    cands[cand_count].cx = (seg_starts[0] + seg_ends[0]) / 2;
-                    cands[cand_count].w = span_w;
-                    cand_count++;
+        }
+
+        if (valid_count >= 1) {
+            int span_left = valid_starts[0];
+            int span_right = valid_ends[valid_count - 1];
+            int span_w = span_right - span_left + 1;
+
+            // Verify bright quiet zone on immediate left and right
+            if (span_left >= 2 && span_right < w - 2) {
+                if (buf[row + span_left - 1] >= thresh && buf[row + span_right + 1] >= thresh) {
+                    if (span_w >= min_size && span_w <= max_size) {
+                        if (cand_count < MAX_ROW_CANDS) {
+                            row_cands[cand_count].y = y;
+                            row_cands[cand_count].left = span_left;
+                            row_cands[cand_count].right = span_right;
+                            row_cands[cand_count].w = span_w;
+                            cand_count++;
+                        }
+                    }
                 }
             }
         }
     }
 
-    if (cand_count < 3) {
+    if (cand_count < 4) {
         return false;
     }
 
-    // Sort cands by x to get robust median cx
-    for (int i = 0; i < cand_count - 1; i++) {
-        for (int j = i + 1; j < cand_count; j++) {
-            if (cands[j].cx < cands[i].cx) {
-                span_cand_t tmp = cands[i];
-                cands[i] = cands[j];
-                cands[j] = tmp;
-            }
-        }
-    }
-    float coarse_cx = (float)cands[cand_count / 2].cx;
-
-    int min_cand_y = cands[0].y;
-    int max_cand_y = cands[0].y;
-    float sum_w = 0.0f;
+    // 3. Determine marker bounding box & center
+    int min_x = w, max_x = 0;
+    int min_y = h, max_y = 0;
     for (int i = 0; i < cand_count; i++) {
-        if (cands[i].y < min_cand_y) min_cand_y = cands[i].y;
-        if (cands[i].y > max_cand_y) max_cand_y = cands[i].y;
-        sum_w += (float)cands[i].w;
+        if (row_cands[i].left < min_x) min_x = row_cands[i].left;
+        if (row_cands[i].right > max_x) max_x = row_cands[i].right;
+        if (row_cands[i].y < min_y) min_y = row_cands[i].y;
+        if (row_cands[i].y > max_y) max_y = row_cands[i].y;
     }
-    float coarse_cy = (float)(min_cand_y + max_cand_y) * 0.5f;
-    float coarse_w = sum_w / (float)cand_count;
-    float coarse_h = (float)(max_cand_y - min_cand_y);
 
-    // Aspect ratio check (allow tilt: 0.5 to 2.0)
-    if (coarse_h < (float)min_size * 0.6f || coarse_w < (float)min_size) {
-        return false;
-    }
-    float aspect = coarse_w / (coarse_h > 1.0f ? coarse_h : 1.0f);
-    if (aspect < 0.50f || aspect > 2.0f) {
+    float box_w = (float)(max_x - min_x + 1);
+    float box_h = (float)(max_y - min_y + 1);
+
+    if (box_w < (float)min_size || box_h < (float)min_size) {
         return false;
     }
 
-    float coarse_r = (coarse_w + coarse_h) * 0.25f;
+    float aspect = box_w / (box_h > 1.0f ? box_h : 1.0f);
+    if (aspect < 0.45f || aspect > 2.2f) {
+        return false;
+    }
 
-    // 3. Fine Inward Radial Ray-Tracing from outside background toward center
-    // Trace from bright background inward until hitting the dark outer border
+    float coarse_cx = (float)(min_x + max_x) * 0.5f;
+    float coarse_cy = (float)(min_y + max_y) * 0.5f;
+    float coarse_r = (box_w + box_h) * 0.25f;
+
+    // 4. Corner Extraction: Outward Ray-Casting from center to outer quiet-zone boundary
+    #define RAY_COUNT 36
     typedef struct {
         float angle;
         float dist;
@@ -241,20 +221,26 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
         rays[i].x = coarse_cx + coarse_r * cos_a;
         rays[i].y = coarse_cy + coarse_r * sin_a;
 
-        float max_r = coarse_r * 1.75f;
-        float min_r = coarse_r * 0.35f;
+        // Trace outward from coarse_r * 0.5 to coarse_r * 1.8 to find transition from dark border to bright quiet zone
+        float max_search_r = coarse_r * 1.75f;
+        float min_search_r = coarse_r * 0.50f;
 
-        for (float r = max_r; r >= min_r; r -= 1.0f) {
+        for (float r = min_search_r; r <= max_search_r; r += 1.0f) {
             int px = (int)(coarse_cx + r * cos_a);
             int py = (int)(coarse_cy + r * sin_a);
+            int px_out = (int)(coarse_cx + (r + 2.0f) * cos_a);
+            int py_out = (int)(coarse_cy + (r + 2.0f) * sin_a);
 
-            if (px < 1 || px >= w - 1 || py < 1 || py >= h - 1) {
-                continue;
+            if (px < 1 || px >= w - 1 || py < 1 || py >= h - 1 ||
+                px_out < 0 || px_out >= w || py_out < 0 || py_out >= h) {
+                break;
             }
 
-            uint8_t val = buf[py * w + px];
-            if (val < thresh) {
-                // First dark pixel encountered coming from the outside background!
+            uint8_t val_cur = buf[py * w + px];
+            uint8_t val_out = buf[py_out * w + px_out];
+
+            // Dark border transition to bright quiet zone
+            if (val_cur < thresh && val_out >= thresh) {
                 rays[i].dist = r;
                 rays[i].x = (float)px;
                 rays[i].y = (float)py;
@@ -263,8 +249,7 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
         }
     }
 
-    // 4. Find 4 local maxima (peaks) of distance from center
-    // For a square, corners have maximum radial distance (~1.414x side center distance)
+    // Find 4 local maxima (peaks) of radial distance
     int peak_indices[RAY_COUNT];
     int peak_count = 0;
 
@@ -272,12 +257,12 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
         int prev = (i - 1 + RAY_COUNT) % RAY_COUNT;
         int next = (i + 1) % RAY_COUNT;
 
-        if (rays[i].dist >= rays[prev].dist && rays[i].dist >= rays[next].dist && rays[i].dist > coarse_r * 0.70f) {
+        if (rays[i].dist >= rays[prev].dist && rays[i].dist >= rays[next].dist && rays[i].dist > coarse_r * 0.75f) {
             peak_indices[peak_count++] = i;
         }
     }
 
-    // Select the best 4 corners using Non-Maximum Suppression (angular separation >= 5 rays = 50 deg)
+    // Select 4 corners using Non-Maximum Suppression (>= 5 rays = 50 deg apart)
     float corners_x[4];
     float corners_y[4];
     int chosen[4];
@@ -294,7 +279,6 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
         }
     }
 
-    // Greedily pick up to 4 peaks with minimum angular distance (at least 5 rays = 50 deg apart)
     for (int i = 0; i < peak_count && chosen_count < 4; i++) {
         int cand_idx = peak_indices[i];
         bool too_close = false;
@@ -303,7 +287,7 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
             if (diff > RAY_COUNT / 2) {
                 diff = RAY_COUNT - diff;
             }
-            if (diff < 5) { // < 50 degrees
+            if (diff < 5) { // < 50 deg
                 too_close = true;
                 break;
             }
@@ -329,29 +313,18 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
             corners_y[i] = rays[chosen[i]].y;
         }
     } else {
-        // Fallback: Pick highest radial peak in each of 4 quadrants (every 9 rays = 90 deg)
-        int q_size = RAY_COUNT / 4;
-        for (int q = 0; q < 4; q++) {
-            int best_idx = q * q_size;
-            float max_d = -1.0f;
-            for (int j = 0; j < q_size; j++) {
-                int idx = q * q_size + j;
-                if (rays[idx].dist > max_d) {
-                    max_d = rays[idx].dist;
-                    best_idx = idx;
-                }
-            }
-            corners_x[q] = rays[best_idx].x;
-            corners_y[q] = rays[best_idx].y;
-        }
+        // Robust Fallback: Use Bounding Box 4 corners directly
+        corners_x[0] = (float)min_x; corners_y[0] = (float)min_y; // Top-Left
+        corners_x[1] = (float)max_x; corners_y[1] = (float)min_y; // Top-Right
+        corners_x[2] = (float)max_x; corners_y[2] = (float)max_y; // Bottom-Right
+        corners_x[3] = (float)min_x; corners_y[3] = (float)max_y; // Bottom-Left
     }
 
-    // 5. Align corners so P0 is top-left, P1 is top-right, P2 is bottom-right, P3 is bottom-left
-    // Find corner with smallest Y (highest in image) or smallest X+Y
+    // 5. Order corners: P0=Top-Left, P1=Top-Right, P2=Bottom-Right, P3=Bottom-Left
     int top_left_idx = 0;
     float min_dist_origin = 1e9f;
     for (int i = 0; i < 4; i++) {
-        float d = corners_x[i] + corners_y[i]; // heuristic for top-left
+        float d = corners_x[i] + corners_y[i];
         if (d < min_dist_origin) {
             min_dist_origin = d;
             top_left_idx = i;
@@ -365,18 +338,15 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
         sorted_y[i] = corners_y[(top_left_idx + i) % 4];
     }
 
-    // Store ordered corners in result
     for (int i = 0; i < 4; i++) {
         result->corners_x[i] = (int)roundf(sorted_x[i]);
         result->corners_y[i] = (int)roundf(sorted_y[i]);
     }
 
     // 6. Geometry & Orientation Calculation
-    // Center of marker (average of 4 corners)
     float cx = (sorted_x[0] + sorted_x[1] + sorted_x[2] + sorted_x[3]) * 0.25f;
     float cy = (sorted_y[0] + sorted_y[1] + sorted_y[2] + sorted_y[3]) * 0.25f;
 
-    // Edge vectors
     float top_vx = sorted_x[1] - sorted_x[0];
     float top_vy = sorted_y[1] - sorted_y[0];
     float bot_vx = sorted_x[2] - sorted_x[3];
@@ -396,43 +366,33 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
         return false;
     }
 
-    // Horizontal reference vector (average of top and bottom edges)
+    // Horizontal reference vector
     float h_vx = (top_vx + bot_vx) * 0.5f;
     float h_vy = (top_vy + bot_vy) * 0.5f;
 
-    // Yaw angle (rotation of marker around optical axis in radians)
-    // 0 rad = marker is aligned horizontally with image
     float yaw_rad = atan2f(h_vy, h_vx);
     float yaw_deg = yaw_rad * (180.0f / (float)M_PI);
 
-    // Roll and Pitch tilt angles from perspective distortion
     float pitch_rad = atanf((len_top - len_bot) / len_avg);
     float roll_rad = atanf((len_right - len_left) / len_avg);
     float pitch_deg = pitch_rad * (180.0f / (float)M_PI);
     float roll_deg = roll_rad * (180.0f / (float)M_PI);
 
-    // 7. 3D Position Estimation (Downward-facing camera)
-    // Z distance from optical center along camera axis (meters)
+    // 7. 3D Position Estimation (FRD coordinates)
     float f_avg = (s_fx + s_fy) * 0.5f;
     float z_dist = (marker_size_m * f_avg) / len_avg;
 
-    // Camera frame coordinates
-    // In downward camera configuration:
-    // Image Y-up corresponds to Body Forward (+X)
-    // Image X-right corresponds to Body Right (+Y)
-    // Camera Z-down corresponds to Body Down (+Z)
     float body_x = -((cy - s_cy0) * z_dist) / s_fy; // Forward (m)
     float body_y =  ((cx - s_cx0) * z_dist) / s_fx; // Right (m)
     float body_z = z_dist;                          // Down (m)
     float total_distance = sqrtf(body_x*body_x + body_y*body_y + body_z*body_z);
 
-    // Convert Euler angles to normalized quaternion [w, x, y, z]
     float q[4];
     euler_to_quaternion(roll_rad, pitch_rad, yaw_rad, q);
 
-    // 8. Populate result structure
+    // 8. Populate result
     result->detected = true;
-    result->id = 0; // Primary landing target
+    result->id = 0;
     result->cx = cx;
     result->cy = cy;
     result->width = (len_top + len_bot) * 0.5f;
