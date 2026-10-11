@@ -277,39 +277,56 @@ bool marker_detector_process(uint16_t w, uint16_t h, const uint8_t *buf, float m
         }
     }
 
-    // Select the best 4 corners
+    // Select the best 4 corners using Non-Maximum Suppression (angular separation >= 5 rays = 50 deg)
     float corners_x[4];
     float corners_y[4];
+    int chosen[4];
+    int chosen_count = 0;
 
-    if (peak_count >= 4) {
-        // Sort peaks by distance descending
-        for (int i = 0; i < peak_count - 1; i++) {
-            for (int j = i + 1; j < peak_count; j++) {
-                if (rays[peak_indices[j]].dist > rays[peak_indices[i]].dist) {
-                    int tmp = peak_indices[i];
-                    peak_indices[i] = peak_indices[j];
-                    peak_indices[j] = tmp;
-                }
+    // Sort peaks by distance descending
+    for (int i = 0; i < peak_count - 1; i++) {
+        for (int j = i + 1; j < peak_count; j++) {
+            if (rays[peak_indices[j]].dist > rays[peak_indices[i]].dist) {
+                int tmp = peak_indices[i];
+                peak_indices[i] = peak_indices[j];
+                peak_indices[j] = tmp;
             }
         }
+    }
 
-        // Take top 4 peaks and sort by ray angle (clockwise order)
-        int best4[4];
-        for (int i = 0; i < 4; i++) best4[i] = peak_indices[i];
-        
+    // Greedily pick up to 4 peaks with minimum angular distance (at least 5 rays = 50 deg apart)
+    for (int i = 0; i < peak_count && chosen_count < 4; i++) {
+        int cand_idx = peak_indices[i];
+        bool too_close = false;
+        for (int c = 0; c < chosen_count; c++) {
+            int diff = abs(cand_idx - chosen[c]);
+            if (diff > RAY_COUNT / 2) {
+                diff = RAY_COUNT - diff;
+            }
+            if (diff < 5) { // < 50 degrees
+                too_close = true;
+                break;
+            }
+        }
+        if (!too_close) {
+            chosen[chosen_count++] = cand_idx;
+        }
+    }
+
+    if (chosen_count == 4) {
+        // Sort chosen corners by ray angle (clockwise order)
         for (int i = 0; i < 3; i++) {
             for (int j = i + 1; j < 4; j++) {
-                if (rays[best4[j]].angle < rays[best4[i]].angle) {
-                    int tmp = best4[i];
-                    best4[i] = best4[j];
-                    best4[j] = tmp;
+                if (rays[chosen[j]].angle < rays[chosen[i]].angle) {
+                    int tmp = chosen[i];
+                    chosen[i] = chosen[j];
+                    chosen[j] = tmp;
                 }
             }
         }
-
         for (int i = 0; i < 4; i++) {
-            corners_x[i] = rays[best4[i]].x;
-            corners_y[i] = rays[best4[i]].y;
+            corners_x[i] = rays[chosen[i]].x;
+            corners_y[i] = rays[chosen[i]].y;
         }
     } else {
         // Fallback: Pick highest radial peak in each of 4 quadrants (every 9 rays = 90 deg)
